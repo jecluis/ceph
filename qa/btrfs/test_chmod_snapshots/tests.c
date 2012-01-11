@@ -168,14 +168,15 @@ static void * tests_run_snapshot(void * args)
 		return ERR_PTR(-errno);
 	}
 
-	__log_snapshot_now(ctl, TESTS_LOG_SNAP_WAIT_END, transid);
+	__log_snapshot_now(ctl, TESTS_LOG_SNAP_WAIT_END, async_vol_args.transid);
 
 	sleep(ctl->options.snap_opts.sleep);
 
 	vol_args.fd = subvol_fd;
 	memcpy(vol_args.name, async_vol_args.name, BTRFS_SUBVOL_NAME_MAX);
 
-	__log_snapshot_now(ctl, TESTS_LOG_SNAP_DESTROY_BEGIN, transid);
+	__log_snapshot_now(ctl, TESTS_LOG_SNAP_DESTROY_BEGIN, 
+			async_vol_args.transid);
 
 	err = ioctl(subvol_fd, BTRFS_IOC_SNAP_DESTROY, &vol_args);
 	if (err < 0) {
@@ -183,7 +184,8 @@ static void * tests_run_snapshot(void * args)
 		return ERR_PTR(-errno);
 	}
 
-	__log_snapshot_now(ctl, TESTS_LOG_SNAP_DESTROY_END, transid);
+	__log_snapshot_now(ctl, TESTS_LOG_SNAP_DESTROY_END, 
+			async_vol_args.transid);
 
 	return NULL;
 }
@@ -192,6 +194,7 @@ static void * tests_run_snapshot(void * args)
 int tests_run(struct tests_ctl * ctl)
 {
 	int err;
+	void * err_ptr;
 	pthread_t tid_chmod;
 	time_t start_time;
 
@@ -205,10 +208,10 @@ int tests_run(struct tests_ctl * ctl)
 		if (ctl->options.snap_opts.delay)
 			sleep(ctl->options.snap_opts.delay);
 
-		err = tests_run_snapshot(ctl);
-		if (err && IS_ERR(err)) {
+		err_ptr = tests_run_snapshot(ctl);
+		if (err_ptr && IS_ERR(err_ptr)) {
 			fprintf(stderr, "Aborting due to error on snapshots: %s\n",
-					strerror((-PTR_ERR(err))));
+					strerror((-PTR_ERR(err_ptr))));
 			ctl->keep_running = 1;
 			break;
 		}
