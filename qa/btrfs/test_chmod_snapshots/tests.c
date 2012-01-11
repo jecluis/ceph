@@ -71,7 +71,7 @@ static void __log_snapshot_now(struct tests_ctl * ctl,
 {
 	struct timeval tv;
 	gettimeofday(&tv, NULL);
-	__log_snapshot(ctl, tv, op, transid);
+	__log_snapshot(ctl, &tv, op, transid);
 }
 
 static void * tests_run_chmod(void * args)
@@ -125,7 +125,7 @@ static void * tests_run_snapshot(void * args)
 	if (!args)
 		return NULL;
 
-	ctl = (struct tests_ctl *) ctl;
+	ctl = (struct tests_ctl *) args;
 
 	if (!ctl->subvolume_path)
 		return NULL;

@@ -164,10 +164,10 @@ int main(int argc, char ** argv)
 	}
 
 	// chdir into subvolume
-	err = chdir(ctl->subvolume_path);
+	err = chdir(ctl.subvolume_path);
 	if (err < 0) {
 		perror("Changing to subvolume directory");
-		goto out;
+		goto err_cleanup;
 	}
 
 	err = do_world_init(&ctl);
