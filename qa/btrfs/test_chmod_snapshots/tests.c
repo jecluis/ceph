@@ -9,14 +9,16 @@
 #include <sys/time.h>
 #include <string.h>
 
+#if defined(__linux__) || defined(__FreeBSD__)
 #include <linux/ioctl.h>
 #include <linux/types.h>
+#include "../../../src/os/btrfs_ioctl.h"
+#endif
 
 #include "ctl.h"
 #include "err.h"
 #include "tests.h"
 
-#include "../../../src/os/btrfs_ioctl.h"
 
 #define TOTAL_MODES 12
 
@@ -35,14 +37,41 @@ static void __log_chmod(struct tests_ctl * ctl,
 	if (!ctl || !start || !end)
 		return;
 
-	log = (struct tests_log_chmod *) malloc(sizeof(log));
+	log = (struct tests_log_chmod *) malloc(sizeof(*log));
 	if (!log)
 		return;
 
-	memcpy(&log->start, &start, sizeof(start));
-	memcpy(&log->end, &end, sizeof(end));
+	memcpy(&log->start, &start, sizeof(*start));
+	memcpy(&log->end, &end, sizeof(*end));
 
 	list_add_tail(&log->lst, &ctl->log_chmod);
+}
+
+static void __log_snapshot(struct tests_ctl * ctl,
+		struct timeval * ts, uint8_t op, uint64_t transid)
+{
+	struct tests_log_snapshot * log;
+
+	if (!ctl || !ts)
+		return;
+
+	log = (struct tests_log_snapshot *) malloc(sizeof(*log));
+	if (!log)
+		return;
+
+	memcpy(&log->timestamp, ts, sizeof(*ts));
+	log->op = op;
+	log->transid = transid;
+
+	list_add_tail(&log->lst, &ctl->log_snapshot);
+}
+
+static void __log_snapshot_now(struct tests_ctl * ctl,
+		uint8_t op, uint64_t transid)
+{
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	__log_snapshot(ctl, tv, op, transid);
 }
 
 static void * tests_run_chmod(void * args)
@@ -56,12 +85,6 @@ static void * tests_run_chmod(void * args)
 		goto out;
 
 	ctl = (struct tests_ctl *) args;
-
-	err = chdir(ctl->subvolume_path);
-	if (err < 0) {
-		perror("Changing to subvolume directory");
-		goto out;
-	}
 
 	i = 0;
 	do {
@@ -97,6 +120,7 @@ static void * tests_run_snapshot(void * args)
 {
 	struct tests_ctl * ctl;
 	char * snap_name;
+	uint64_t transid;
 
 	if (!args)
 		return NULL;
@@ -106,7 +130,17 @@ static void * tests_run_snapshot(void * args)
 	if (!ctl->subvolume_path)
 		return NULL;
 
+	__log_snapshot_now(ctl, TESTS_LOG_SNAP_CREATE, 0);
 
+	__log_snapshot_now(ctl, TESTS_LOG_SNAP_WAIT_BEGIN, transid);
+
+	__log_snapshot_now(ctl, TESTS_LOG_SNAP_WAIT_END, transid);
+
+	sleep(ctl->options.snap_opts.sleep);
+
+	__log_snapshot_now(ctl, TESTS_LOG_SNAP_DESTROY_BEGIN, transid);
+
+	__log_snapshot_now(ctl, TESTS_LOG_SNAP_DESTROY_END, transid);
 
 	return NULL;
 }
@@ -125,6 +159,9 @@ int tests_run(struct tests_ctl * ctl)
 
 	start_time = time(NULL);
 	do {
+		if (ctl->options.snap_opts.delay)
+			sleep(ctl->options.snap_opts.delay);
+
 		tests_run_snapshot(ctl);
 
 		if (ctl->options.runtime > 0) {

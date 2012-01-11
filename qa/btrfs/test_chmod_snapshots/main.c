@@ -163,6 +163,13 @@ int main(int argc, char ** argv)
 		goto err_cleanup;
 	}
 
+	// chdir into subvolume
+	err = chdir(ctl->subvolume_path);
+	if (err < 0) {
+		perror("Changing to subvolume directory");
+		goto out;
+	}
+
 	err = do_world_init(&ctl);
 	if (err < 0) {
 		fprintf(stderr, "initiating world: %s\n", strerror(err));

@@ -40,7 +40,7 @@ int tests_ctl_init_paths(struct tests_ctl * ctl, char * subvolume, char * snap)
 		return -EINVAL;
 
 	len = strlen(subvolume);
-	ctl->subvolume_path = malloc(len*sizeof(ctl->subvolume_path) + 1);
+	ctl->subvolume_path = malloc(len*sizeof(*ctl->subvolume_path) + 1);
 	if (!ctl->subvolume_path)
 		return -ENOMEM;
 
@@ -48,7 +48,7 @@ int tests_ctl_init_paths(struct tests_ctl * ctl, char * subvolume, char * snap)
 	ctl->subvolume_path[len] = '\0';
 
 	len = strlen(snap);
-	ctl->snapshot_path = malloc(len*sizeof(ctl->snapshot_path) + 1);
+	ctl->snapshot_path = malloc(len*sizeof(*ctl->snapshot_path) + 1);
 	if (!ctl->snapshot_path) {
 		free(ctl->subvolume_path);
 		return -ENOMEM;
