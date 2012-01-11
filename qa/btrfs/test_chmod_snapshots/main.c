@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <signal.h>
 
 #include "ctl.h"
 #include "err.h"
@@ -26,6 +27,8 @@ static struct option longopts[] = {
 		{ "help", no_argument, NULL, 'h' },
 		{ NULL, 0, NULL, 0 }
 };
+
+struct tests_ctl ctl;
 
 
 void print_usage(const char * name)
@@ -134,10 +137,15 @@ int do_tests(struct tests_ctl * ctl)
 	return ret;
 }
 
+void sighandler(int sig)
+{
+	printf("Ordering everybody to eventually stop...\n");
+	ctl.keep_running = 0;
+}
 
 int main(int argc, char ** argv)
 {
-	struct tests_ctl ctl;
+//	struct tests_ctl ctl;
 	int err;
 
 	char ** p_argv; // xxx: figure out how to do this without being ugly.
@@ -175,6 +183,8 @@ int main(int argc, char ** argv)
 		fprintf(stderr, "initiating world: %s\n", strerror(err));
 		goto err_cleanup;
 	}
+
+	signal(SIGINT, sighandler);
 
 	err = do_tests(&ctl);
 	if (err < 0) {

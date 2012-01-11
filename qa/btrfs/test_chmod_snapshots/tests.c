@@ -110,6 +110,7 @@ static void * tests_run_chmod(void * args)
 		__log_chmod(ctl, &tv_start, &tv_end);
 	} while(ctl->keep_running);
 
+	printf("Chmod'ing finished.\n");
 
 
 out:
@@ -170,6 +171,7 @@ int tests_run(struct tests_ctl * ctl)
 		}
 	} while(ctl->keep_running);
 
+	printf("Snapshot'ing finished.\n");
 
 
 	return 0;
