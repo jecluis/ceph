@@ -8,6 +8,7 @@
 #include <signal.h>
 #include <sys/time.h>
 #include <string.h>
+#include <errno.h>
 
 #if defined(__linux__) || defined(__FreeBSD__)
 #include <linux/ioctl.h>
@@ -120,26 +121,67 @@ out:
 static void * tests_run_snapshot(void * args)
 {
 	struct tests_ctl * ctl;
-	char * snap_name;
-	uint64_t transid;
+	int subvol_fd;
+//	char * snap_name;
+//	uint64_t transid;
+	size_t len;
+	int err;
 
-	if (!args)
-		return NULL;
+	struct btrfs_ioctl_vol_args_v2	async_vol_args;
+	struct btrfs_ioctl_vol_args 	vol_args;
 
 	ctl = (struct tests_ctl *) args;
 
-	if (!ctl->subvolume_path)
-		return NULL;
+	if (!ctl || !ctl->subvolume_path)
+		return ERR_PTR(-EINVAL);
+
+	subvol_fd = open(ctl->subvolume_path, O_RDONLY);
+	if (subvol_fd < 0) {
+		perror("opening subvolume path");
+		return ERR_PTR(-errno);
+	}
+
+
+	async_vol_args.fd = subvol_fd;
+	async_vol_args.flags = BTRFS_SUBVOL_CREATE_ASYNC;
+	async_vol_args.transid = 0;
+
+	len = strlen(ctl->snapshot_path);
+	len = (len > BTRFS_SUBVOL_NAME_MAX ? BTRFS_SUBVOL_NAME_MAX : len);
+
+	memset(async_vol_args.name, 0, BTRFS_SUBVOL_NAME_MAX + 1);
+	memcpy(async_vol_args.name, ctl->snapshot_path, len);
 
 	__log_snapshot_now(ctl, TESTS_LOG_SNAP_CREATE, 0);
 
-	__log_snapshot_now(ctl, TESTS_LOG_SNAP_WAIT_BEGIN, transid);
+	err = ioctl(subvol_fd, BTRFS_IOC_SNAP_CREATE_V2, &async_vol_args);
+	if (err < 0) {
+		perror("creating async snapshot");
+		return ERR_PTR(-errno);
+	}
+
+	__log_snapshot_now(ctl, TESTS_LOG_SNAP_WAIT_BEGIN, async_vol_args.transid);
+
+	err = ioctl(subvol_fd, BTRFS_IOC_WAIT_SYNC, &async_vol_args.transid);
+	if (err < 0) {
+		perror("waiting for snapshot");
+		return ERR_PTR(-errno);
+	}
 
 	__log_snapshot_now(ctl, TESTS_LOG_SNAP_WAIT_END, transid);
 
 	sleep(ctl->options.snap_opts.sleep);
 
+	vol_args.fd = subvol_fd;
+	memcpy(vol_args.name, async_vol_args.name, BTRFS_SUBVOL_NAME_MAX);
+
 	__log_snapshot_now(ctl, TESTS_LOG_SNAP_DESTROY_BEGIN, transid);
+
+	err = ioctl(subvol_fd, BTRFS_IOC_SNAP_DESTROY, &vol_args);
+	if (err < 0) {
+		perror("destroying snapshot");
+		return ERR_PTR(-errno);
+	}
 
 	__log_snapshot_now(ctl, TESTS_LOG_SNAP_DESTROY_END, transid);
 
@@ -163,7 +205,13 @@ int tests_run(struct tests_ctl * ctl)
 		if (ctl->options.snap_opts.delay)
 			sleep(ctl->options.snap_opts.delay);
 
-		tests_run_snapshot(ctl);
+		err = tests_run_snapshot(ctl);
+		if (err && IS_ERR(err)) {
+			fprintf(stderr, "Aborting due to error on snapshots: %s\n",
+					strerror((-PTR_ERR(err))));
+			ctl->keep_running = 1;
+			break;
+		}
 
 		if (ctl->options.runtime > 0) {
 			ctl->keep_running =
