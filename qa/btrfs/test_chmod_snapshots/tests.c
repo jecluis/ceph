@@ -49,7 +49,7 @@ static void __log_chmod(struct tests_ctl * ctl,
 
 	ctl->chmods_performed ++;
 
-	list_add(&log->lst, &ctl->log_chmod);
+	list_add_tail(&log->lst, &ctl->log_chmod);
 }
 
 #if 0
@@ -92,7 +92,7 @@ static struct tests_log_snapshot * __log_snapshot_start(void)
 static void __log_snapshot_finish(struct tests_ctl * ctl,
 		struct tests_log_snapshot * log)
 {
-	list_add(&log->lst, &ctl->log_snapshot);
+	list_add_tail(&log->lst, &ctl->log_snapshot);
 }
 
 

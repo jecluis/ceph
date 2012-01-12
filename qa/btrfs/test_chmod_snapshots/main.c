@@ -155,9 +155,12 @@ void do_print_results(struct tests_ctl * ctl)
 	uint64_t affected_create_sum = 0, affected_create_total = 0;
 	uint64_t affected_wait_sum = 0, affected_wait_total = 0;
 	uint64_t affected_delete_sum = 0, affected_delete_total = 0;
+	double affected_create_avg = 0, affected_wait_avg = 0;
+	double affected_delete_avg = 0;
 
 	uint64_t unaffected_sum = 0;
 	uint64_t unaffected_total = 0;
+	double unaffected_avg = 0;
 
 	int cnt = 0;
 
@@ -238,16 +241,31 @@ lbl_next:
 
 	printf("\n");
 
-#if 0
+	printf("Average time (us) for chmod operations:\n");
+	if (unaffected_total > 0) {
+		unaffected_avg = ((double) unaffected_sum / unaffected_total);
+	}
+	if (affected_create_total > 0) {
+		affected_create_avg =
+				((double) affected_create_sum / affected_create_total);
+	}
+	if (affected_wait_total > 0) {
+		affected_wait_avg =
+				((double) affected_wait_sum / affected_wait_total);
+	}
+	if (affected_delete_total > 0) {
+		affected_delete_avg =
+				((double) affected_delete_sum / affected_delete_total);
+	}
+
 	printf(	"unaffected chmods avg (us): %f\n"
 			"affected by create (us):    %f\n"
 			"affected by wait (us):      %f\n"
 			"affected by delete (us):    %f\n",
-			(double) (unaffected_sum/unaffected_total),
-			(double) (affected_create_sum/affected_create_total),
-			(double) (affected_wait_sum/affected_wait_total),
-			(double) (affected_delete_sum/affected_delete_total));
-#endif
+			unaffected_avg, affected_create_avg,
+			affected_wait_avg, affected_delete_avg);
+
+#if 0
 	printf(	"unaffected chmods avg (us): %llu, %llu\n"
 			"affected by create (us):    %llu, %llu\n"
 			"affected by wait (us):      %llu, %llu\n"
@@ -256,6 +274,7 @@ lbl_next:
 			affected_create_sum, affected_create_total,
 			affected_wait_sum, affected_wait_total,
 			affected_delete_sum, affected_delete_total);
+#endif
 }
 
 void sighandler(int sig)
