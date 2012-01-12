@@ -22,6 +22,10 @@
 #include "err.h"
 #include "tests.h"
 
+struct tests_thread_args {
+	void * args;
+	int tid;
+};
 
 #define TOTAL_MODES 12
 
@@ -32,7 +36,7 @@ static mode_t modes[TOTAL_MODES] = {
 		S_IROTH, S_IWOTH, S_IXOTH
 };
 
-static void __log_chmod(struct tests_ctl * ctl,
+static void __log_chmod(struct tests_ctl * ctl, int tid,
 		struct timeval * start, struct timeval * end)
 {
 	struct tests_log_chmod * log;
@@ -47,9 +51,9 @@ static void __log_chmod(struct tests_ctl * ctl,
 	log->start = (start->tv_sec*1000000) + (start->tv_usec);
 	log->end = (end->tv_sec*1000000) + (end->tv_usec);
 
-	ctl->chmods_performed ++;
+	ctl->chmods_performed[tid] ++;
 
-	list_add_tail(&log->lst, &ctl->log_chmod);
+	list_add_tail(&log->lst, ctl->log_chmod[tid]);
 }
 
 #if 0
@@ -98,6 +102,7 @@ static void __log_snapshot_finish(struct tests_ctl * ctl,
 
 static void * tests_run_chmod(void * args)
 {
+	struct tests_thread_args * thread_args;
 	struct tests_ctl * ctl;
 	struct timeval tv_start, tv_end;
 	int err;
@@ -106,7 +111,12 @@ static void * tests_run_chmod(void * args)
 	if (!args)
 		goto out;
 
-	ctl = (struct tests_ctl *) args;
+	thread_args = (struct tests_thread_args *) args;
+
+	if (!thread_args->args)
+		goto out;
+
+	ctl = (struct tests_ctl *) thread_args->args;
 
 	i = 0;
 	do {
@@ -129,7 +139,7 @@ static void * tests_run_chmod(void * args)
 			break;
 		}
 
-		__log_chmod(ctl, &tv_start, &tv_end);
+		__log_chmod(ctl, thread_args->tid, &tv_start, &tv_end);
 	} while(ctl->keep_running);
 
 	printf("Chmod'ing finished.\n");
@@ -241,13 +251,42 @@ int tests_run(struct tests_ctl * ctl)
 {
 	int err;
 	void * err_ptr;
-	pthread_t tid_chmod;
 	time_t start_time;
+	pthread_t * tid_chmod;
+	struct tests_thread_args ** args;
+	int i;
 
-	err = pthread_create(&tid_chmod, NULL, tests_run_chmod, (void *) ctl);
-	if (err) {
-		fprintf(stderr, "Error creating thread: %s\n", strerror(err));
-		return (-err);
+	if (!ctl) {
+		fprintf(stderr, "tests_run: NULL ctl\n");
+		return -EINVAL;
+	}
+
+	tid_chmod = (pthread_t *) malloc(sizeof(*tid_chmod)*ctl->chmod_threads);
+	if (!tid_chmod)
+		return -ENOMEM;
+
+	args = (struct tests_thread_args **)
+			malloc(sizeof(*args)*ctl->chmod_threads);
+	if (!args) {
+		free(tid_chmod);
+		return -ENOMEM;
+	}
+
+	for (i = 0; i < ctl->chmod_threads; i ++) {
+		args[i] = (struct tests_thread_args *) malloc(sizeof(*args[i]));
+		if (!args[i]) {
+			return -ENOMEM;
+		}
+		args[i]->args = (void *) ctl;
+		args[i]->tid = i;
+
+
+		err = pthread_create(&tid_chmod[i], NULL,
+				tests_run_chmod, (void *) args[i]);
+		if (err) {
+			fprintf(stderr, "Error creating thread %i: %s\n", i, strerror(err));
+			return (-err);
+		}
 	}
 
 	start_time = time(NULL);
@@ -271,10 +310,12 @@ int tests_run(struct tests_ctl * ctl)
 
 	printf("Snapshot'ing finished.\n");
 
-	err = pthread_join(tid_chmod, NULL);
-	if (err) {
-		fprintf(stderr, "Error joining thread: %s\n", strerror(err));
-		return (-err);
+	for (i = 0; i < ctl->chmod_threads; i ++) {
+		err = pthread_join(tid_chmod[i], NULL);
+		if (err) {
+			fprintf(stderr, "Error joining thread %i: %s\n", i, strerror(err));
+			return (-err);
+		}
 	}
 
 	return 0;

@@ -25,6 +25,7 @@ static char * __generate_filename(void);
 static struct option longopts[] = {
 		{ "sleep", required_argument, NULL, 's' },
 		{ "delay", required_argument, NULL, 'd' },
+		{ "threads", required_argument, NULL, 't' },
 		{ "init", no_argument, NULL, 'i' },
 		{ "help", no_argument, NULL, 'h' },
 		{ NULL, 0, NULL, 0 }
@@ -42,6 +43,7 @@ void print_usage(const char * name)
 		"        -i, --init               Randomly initialize the FS\n"
 		"        -s, --sleep=VAL          Sleep (in seconds) during snapshots\n"
 		"        -d, --delay=VAL          Delay (in seconds) between snapshots\n"
+		"        -t, --threads=VAL        Number of threads for chmod test\n"
 		"        -h, --help               This information\n"
 		"\n", name
 	);
@@ -62,7 +64,7 @@ int do_getopt(int * argc, char ** argv, struct tests_options * options)
 
 	tests_options_init(options);
 
-	while (((ch = getopt_long(*argc, argv, "s:d:ih", longopts, NULL)) != -1)
+	while (((ch = getopt_long(*argc, argv, "s:d:t:ih", longopts, NULL)) != -1)
 			&& !cleanup) {
 		switch (ch) {
 		case 'i':
@@ -73,6 +75,9 @@ int do_getopt(int * argc, char ** argv, struct tests_options * options)
 			break;
 		case 'd':
 			options->snap_opts.delay = strtol(optarg, NULL, 10);
+			break;
+		case 't':
+			options->chmod_opts.num_threads = strtol(optarg, NULL, 10);
 			break;
 		case 'h':
 			print_usage(name);
@@ -143,6 +148,41 @@ static inline uint64_t tv2ts(struct timeval * tv)
 	return ((tv->tv_sec * 1000000) + tv->tv_usec);
 }
 
+static struct tests_log_chmod * __results_obtain_chmod(struct tests_ctl * ctl,
+		struct tests_log_snapshot * snap)
+{
+	int i;
+	struct tests_log_chmod * log = NULL;
+
+	if (!ctl || !snap)
+		return NULL;
+
+	i = 0;
+	while (i < ctl->chmod_threads) {
+		if (list_empty(ctl->log_chmod[i])) {
+			i ++;
+			continue;
+		}
+
+		log = list_entry(ctl->log_chmod[i]->next, struct tests_log_chmod, lst);
+		if (log->start > tv2ts(&snap->destroy_end)) {
+			/* this condition presumes that the last test performed is always
+			 * a snapshot (since they take longer). Even if it is not, it will
+			 * be negligible, as it will always be only a single chmod more,
+			 * and a single chmod performance gets diluted in the whole
+			 * universe of chmods ran during the test. (one chmod per thread)
+			 */
+			i ++;
+			continue;
+		}
+
+		list_del(&log->lst);
+		return log;
+	}
+
+	return NULL;
+}
+
 void do_print_results(struct tests_ctl * ctl)
 {
 	struct tests_log_chmod * log_chmod;
@@ -162,6 +202,8 @@ void do_print_results(struct tests_ctl * ctl)
 	uint64_t unaffected_total = 0;
 	double unaffected_avg = 0;
 
+	uint64_t chmods_performed = 0;
+
 	int cnt = 0;
 
 	if (!ctl) {
@@ -170,18 +212,25 @@ void do_print_results(struct tests_ctl * ctl)
 	}
 
 
-	lst_chmod_ptr = ctl->log_chmod.next;
+	for (cnt = 0; cnt < ctl->chmod_threads; cnt ++)
+		chmods_performed += ctl->chmods_performed[cnt];
+
+	cnt = 0;
+
+	//lst_chmod_ptr = ctl->log_chmod.next;
 	for (lst_snap_ptr = ctl->log_snapshot.next; !list_empty(lst_snap_ptr); ) {
 
 		log_snap = list_entry(lst_snap_ptr, struct tests_log_snapshot, lst);
 
-		for (; !list_empty(lst_chmod_ptr); ) {
+		while ((log_chmod = __results_obtain_chmod(ctl, log_snap))) {
 
+//		}
+//		for (; !list_empty(lst_chmod_ptr); ) {
 			cnt ++;
 			printf("%d / %llu\r", cnt,
-					(long long unsigned int) ctl->chmods_performed);
+					(long long unsigned int) chmods_performed);
 
-			log_chmod = list_entry(lst_chmod_ptr, struct tests_log_chmod, lst);
+//			log_chmod = list_entry(lst_chmod_ptr, struct tests_log_chmod, lst);
 			chmod_start_ts = log_chmod->start;
 			chmod_end_ts = log_chmod->end;
 			chmod_diff = (chmod_end_ts - chmod_start_ts);
@@ -227,16 +276,17 @@ void do_print_results(struct tests_ctl * ctl)
 				goto lbl_next;
 			}
 
-			break;
+//			continue;
 
 lbl_next:
-			lst_chmod_ptr = lst_chmod_ptr->next;
-			list_del(&log_chmod->lst);
-//			free(log_chmod);
+			//lst_chmod_ptr = lst_chmod_ptr->next;
+			//list_del(&log_chmod->lst);
+			free(log_chmod);
 			continue;
 		}
 		lst_snap_ptr = lst_snap_ptr->next;
 		list_del(&log_snap->lst);
+		free(log_snap);
 	}
 
 	printf("\n");
@@ -289,6 +339,7 @@ int main(int argc, char ** argv)
 
 	int p_argc;
 	char ** p_argv;
+	struct timeval tv_start, tv_end;
 
 	p_argc = argc;
 
@@ -305,7 +356,8 @@ int main(int argc, char ** argv)
 
 	p_argv = argv + (argc - p_argc);
 
-	err = tests_ctl_init(&ctl, p_argv[0], p_argv[1]);
+	err = tests_ctl_init(&ctl, p_argv[0], p_argv[1],
+			ctl.options.chmod_opts.num_threads);
 	if (err < 0) {
 		print_usage(argv[0]);
 		goto err_cleanup;
@@ -326,10 +378,15 @@ int main(int argc, char ** argv)
 
 	signal(SIGINT, sighandler);
 
+	gettimeofday(&tv_start, NULL);
 	err = do_tests(&ctl);
 	if (err < 0) {
 		goto err_cleanup;
 	}
+	gettimeofday(&tv_end, NULL);
+
+	printf("Test ran for %llu usecs\n", 
+			(tv2ts(&tv_end) - tv2ts(&tv_start)));
 
 	do_print_results(&ctl);
 

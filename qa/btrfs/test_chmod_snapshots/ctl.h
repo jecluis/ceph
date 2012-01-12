@@ -12,6 +12,7 @@
 
 struct tests_chmod_opts {
 	char * filename;
+	int num_threads;
 };
 
 struct tests_snap_opts {
@@ -41,9 +42,11 @@ struct tests_ctl {
 
 	uint64_t 				snaps_created;
 	uint64_t 				snaps_destroyed;
-	uint64_t 				chmods_performed;
 
-	struct list_head 		log_chmod;
+	int						chmod_threads;
+	uint64_t * 				chmods_performed;
+	struct list_head **		log_chmod;
+
 	struct list_head 		log_snapshot;
 };
 
@@ -51,6 +54,7 @@ extern void tests_options_cleanup(struct tests_options * options);
 extern void tests_options_init(struct tests_options * options);
 extern int
 tests_ctl_init_paths(struct tests_ctl * ctl, char * subvolume, char * snap);
-extern int tests_ctl_init(struct tests_ctl * ctl, char * subvol, char * snap);
+extern int tests_ctl_init(struct tests_ctl * ctl, char * subvol, char * snap,
+		int chmod_threads);
 
 #endif /* CEPH_BTRFS_TESTS_OPTIONS_H_ */
