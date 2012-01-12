@@ -49,7 +49,7 @@ static void __log_chmod(struct tests_ctl * ctl,
 
 	ctl->chmods_performed ++;
 
-	list_add_tail(&log->lst, &ctl->log_chmod);
+	list_add(&log->lst, &ctl->log_chmod);
 }
 
 #if 0
@@ -92,7 +92,7 @@ static struct tests_log_snapshot * __log_snapshot_start(void)
 static void __log_snapshot_finish(struct tests_ctl * ctl,
 		struct tests_log_snapshot * log)
 {
-	list_add_tail(&log->lst, &ctl->log_snapshot);
+	list_add(&log->lst, &ctl->log_snapshot);
 }
 
 
@@ -204,6 +204,7 @@ static void * tests_run_snapshot(void * args)
 		perror("waiting for snapshot");
 		goto err_close;
 	}
+//	ctl->keep_running = 0;
 
 	gettimeofday(&snap_log->wait_end, NULL);
 
@@ -261,8 +262,6 @@ int tests_run(struct tests_ctl * ctl)
 			ctl->keep_running = 0;
 			break;
 		}
-
-		ctl->keep_running = 0;
 
 		if (ctl->options.runtime > 0) {
 			ctl->keep_running =

@@ -37,7 +37,7 @@ void print_usage(const char * name)
 {
 	printf(
 		"Ceph Btrfs testss\n"
-		"Usage:  %s [options...] <subvolume> <snapshot>\n\n"
+		"Usage:  %s [options...] <subvolume> <snapshot_name>\n\n"
 		"Options:\n"
 		"        -i, --init               Randomly initialize the FS\n"
 		"        -s, --sleep=VAL          Sleep (in seconds) during snapshots\n"
@@ -237,6 +237,8 @@ lbl_next:
 	}
 
 	printf("\n");
+
+#if 0
 	printf(	"unaffected chmods avg (us): %f\n"
 			"affected by create (us):    %f\n"
 			"affected by wait (us):      %f\n"
@@ -245,6 +247,15 @@ lbl_next:
 			(double) (affected_create_sum/affected_create_total),
 			(double) (affected_wait_sum/affected_wait_total),
 			(double) (affected_delete_sum/affected_delete_total));
+#endif
+	printf(	"unaffected chmods avg (us): %llu, %llu\n"
+			"affected by create (us):    %llu, %llu\n"
+			"affected by wait (us):      %llu, %llu\n"
+			"affected by delete (us):    %llu, %llu\n",
+			unaffected_sum, unaffected_total,
+			affected_create_sum, affected_create_total,
+			affected_wait_sum, affected_wait_total,
+			affected_delete_sum, affected_delete_total);
 }
 
 void sighandler(int sig)
