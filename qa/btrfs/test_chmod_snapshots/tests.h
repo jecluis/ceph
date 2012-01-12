@@ -7,16 +7,21 @@
 struct tests_log_chmod {
 	struct list_head lst;
 
-	struct timeval start;
-	struct timeval end;
+	uint64_t start;
+	uint64_t end;
 };
 
 struct tests_log_snapshot {
 	struct list_head lst;
 
-	struct timeval timestamp;
-	uint8_t op;
-	uint64_t transid;
+	struct timeval create;
+	struct timeval wait_begin;
+	struct timeval wait_end;
+	struct timeval destroy_begin;
+	struct timeval destroy_end;
+
+//	uint8_t op;
+//	uint64_t transid;
 };
 
 #define TESTS_LOG_SNAP_CREATE	 		(0x01)

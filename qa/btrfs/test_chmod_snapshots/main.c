@@ -9,10 +9,12 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <signal.h>
+#include <unistd.h>
 
 #include "ctl.h"
 #include "err.h"
 #include "tests.h"
+#include "list.h"
 
 /* 30 chars for a randomly generated file name
  * ought to be enough for anyone */
@@ -86,7 +88,6 @@ int do_getopt(int * argc, char ** argv, struct tests_options * options)
 		}
 	}
 	*argc -= optind;
-	argv += optind;
 
 	if (cleanup) {
 		tests_options_cleanup(options);
@@ -137,6 +138,115 @@ int do_tests(struct tests_ctl * ctl)
 	return ret;
 }
 
+static inline uint64_t tv2ts(struct timeval * tv)
+{
+	return ((tv->tv_sec * 1000000) + tv->tv_usec);
+}
+
+void do_print_results(struct tests_ctl * ctl)
+{
+	struct tests_log_chmod * log_chmod;
+	struct tests_log_snapshot * log_snap;
+	uint64_t chmod_start_ts, chmod_end_ts;
+	uint64_t chmod_diff;
+
+	struct list_head * lst_chmod_ptr, * lst_snap_ptr;
+
+	uint64_t affected_create_sum = 0, affected_create_total = 0;
+	uint64_t affected_wait_sum = 0, affected_wait_total = 0;
+	uint64_t affected_delete_sum = 0, affected_delete_total = 0;
+
+	uint64_t unaffected_sum = 0;
+	uint64_t unaffected_total = 0;
+
+	int cnt = 0;
+
+	if (!ctl) {
+		fprintf(stderr, "do_print_results: NULL ctl struct\n");
+		return;
+	}
+
+
+	lst_chmod_ptr = ctl->log_chmod.next;
+	for (lst_snap_ptr = ctl->log_snapshot.next; !list_empty(lst_snap_ptr); ) {
+
+		log_snap = list_entry(lst_snap_ptr, struct tests_log_snapshot, lst);
+
+		for (; !list_empty(lst_chmod_ptr); ) {
+
+			cnt ++;
+			printf("%d / %llu\r", cnt,
+					(long long unsigned int) ctl->chmods_performed);
+
+			log_chmod = list_entry(lst_chmod_ptr, struct tests_log_chmod, lst);
+			chmod_start_ts = log_chmod->start;
+			chmod_end_ts = log_chmod->end;
+			chmod_diff = (chmod_end_ts - chmod_start_ts);
+
+			if (chmod_end_ts < tv2ts(&log_snap->create)) {
+				unaffected_sum += chmod_diff;
+				unaffected_total ++;
+				goto lbl_next;
+			}
+
+			if (chmod_end_ts < tv2ts(&log_snap->wait_begin)) {
+				// add to wait create stats
+				affected_create_sum += chmod_diff;
+				affected_create_total ++;
+				goto lbl_next;
+			}
+
+			if (chmod_end_ts < tv2ts(&log_snap->wait_end)) {
+				// add to wait stats
+				affected_wait_sum += chmod_diff;
+				affected_wait_total ++;
+				goto lbl_next;
+			}
+
+			if (chmod_end_ts < tv2ts(&log_snap->destroy_begin)) {
+				if (chmod_start_ts < tv2ts(&log_snap->wait_end)) {
+					// add to wait stats
+					affected_wait_sum += chmod_diff;
+					affected_wait_total ++;
+					goto lbl_next;
+				}
+				// okay
+				unaffected_sum += chmod_diff;
+				unaffected_total ++;
+				goto lbl_next;
+			}
+
+			if ((chmod_end_ts < tv2ts(&log_snap->destroy_end))
+					|| (chmod_start_ts < tv2ts(&log_snap->destroy_end))) {
+				// add to delete stats
+				affected_delete_sum += chmod_diff;
+				affected_delete_total ++;
+				goto lbl_next;
+			}
+
+			break;
+
+lbl_next:
+			lst_chmod_ptr = lst_chmod_ptr->next;
+			list_del(&log_chmod->lst);
+//			free(log_chmod);
+			continue;
+		}
+		lst_snap_ptr = lst_snap_ptr->next;
+		list_del(&log_snap->lst);
+	}
+
+	printf("\n");
+	printf(	"unaffected chmods avg (us): %f\n"
+			"affected by create (us):    %f\n"
+			"affected by wait (us):      %f\n"
+			"affected by delete (us):    %f\n",
+			(double) (unaffected_sum/unaffected_total),
+			(double) (affected_create_sum/affected_create_total),
+			(double) (affected_wait_sum/affected_wait_total),
+			(double) (affected_delete_sum/affected_delete_total));
+}
+
 void sighandler(int sig)
 {
 	printf("Ordering everybody to eventually stop...\n");
@@ -145,16 +255,14 @@ void sighandler(int sig)
 
 int main(int argc, char ** argv)
 {
-//	struct tests_ctl ctl;
 	int err;
 
-	char ** p_argv; // xxx: figure out how to do this without being ugly.
 	int p_argc;
+	char ** p_argv;
 
 	p_argc = argc;
-	p_argv = argv;
 
-	err = do_getopt(&p_argc, p_argv, &ctl.options);
+	err = do_getopt(&p_argc, argv, &ctl.options);
 	if (err < 0) {
 		fprintf(stderr, "unable to obtain options: %s\n", strerror(err));
 		return 1;
@@ -165,7 +273,9 @@ int main(int argc, char ** argv)
 		goto err_cleanup;
 	}
 
-	err = tests_ctl_init(&ctl, argv[1], argv[2]);
+	p_argv = argv + (argc - p_argc);
+
+	err = tests_ctl_init(&ctl, p_argv[0], p_argv[1]);
 	if (err < 0) {
 		print_usage(argv[0]);
 		goto err_cleanup;
@@ -188,8 +298,10 @@ int main(int argc, char ** argv)
 
 	err = do_tests(&ctl);
 	if (err < 0) {
-
+		goto err_cleanup;
 	}
+
+	do_print_results(&ctl);
 
 	return 0;
 

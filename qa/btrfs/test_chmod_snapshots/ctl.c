@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
+#include <libgen.h>
 
 #include "ctl.h"
 #include "list.h"
@@ -35,6 +36,7 @@ void tests_options_init(struct tests_options * options)
 int tests_ctl_init_paths(struct tests_ctl * ctl, char * subvolume, char * snap)
 {
 	size_t len;
+	char * tmp_str;
 
 	if (!ctl || !subvolume || !snap)
 		return -EINVAL;
@@ -48,14 +50,17 @@ int tests_ctl_init_paths(struct tests_ctl * ctl, char * subvolume, char * snap)
 	ctl->subvolume_path[len] = '\0';
 
 	len = strlen(snap);
-	ctl->snapshot_path = malloc(len*sizeof(*ctl->snapshot_path) + 1);
-	if (!ctl->snapshot_path) {
+	ctl->snapshot_name = malloc(len*sizeof(*ctl->snapshot_name) + 1);
+	if (!ctl->snapshot_name) {
 		free(ctl->subvolume_path);
 		return -ENOMEM;
 	}
 
-	memcpy(ctl->snapshot_path, snap, len);
-	ctl->snapshot_path[len] = '\0';
+	memcpy(ctl->snapshot_name, snap, len);
+	ctl->snapshot_name[len] = '\0';
+
+	tmp_str = strdup(ctl->subvolume_path);
+	ctl->destination_path = dirname(tmp_str);
 
 	return 0;
 }

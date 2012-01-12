@@ -34,7 +34,8 @@ struct tests_ctl {
 	struct tests_options	options;
 
 	char * 					subvolume_path;
-	char * 					snapshot_path;
+	char * 					snapshot_name;
+	char *					destination_path;
 
 	uint8_t 				keep_running;
 

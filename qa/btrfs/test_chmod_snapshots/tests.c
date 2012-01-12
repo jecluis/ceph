@@ -9,6 +9,8 @@
 #include <sys/time.h>
 #include <string.h>
 #include <errno.h>
+#include <libgen.h>
+#include <sys/ioctl.h>
 
 #if defined(__linux__) || defined(__FreeBSD__)
 #include <linux/ioctl.h>
@@ -42,12 +44,15 @@ static void __log_chmod(struct tests_ctl * ctl,
 	if (!log)
 		return;
 
-	memcpy(&log->start, &start, sizeof(*start));
-	memcpy(&log->end, &end, sizeof(*end));
+	log->start = (start->tv_sec*1000000) + (start->tv_usec);
+	log->end = (end->tv_sec*1000000) + (end->tv_usec);
+
+	ctl->chmods_performed ++;
 
 	list_add_tail(&log->lst, &ctl->log_chmod);
 }
 
+#if 0
 static void __log_snapshot(struct tests_ctl * ctl,
 		struct timeval * ts, uint8_t op, uint64_t transid)
 {
@@ -74,6 +79,22 @@ static void __log_snapshot_now(struct tests_ctl * ctl,
 	gettimeofday(&tv, NULL);
 	__log_snapshot(ctl, &tv, op, transid);
 }
+#endif
+
+static struct tests_log_snapshot * __log_snapshot_start(void)
+{
+	struct tests_log_snapshot * log;
+
+	log = (struct tests_log_snapshot *) malloc(sizeof(*log));
+	return log;
+}
+
+static void __log_snapshot_finish(struct tests_ctl * ctl,
+		struct tests_log_snapshot * log)
+{
+	list_add_tail(&log->lst, &ctl->log_snapshot);
+}
+
 
 static void * tests_run_chmod(void * args)
 {
@@ -121,73 +142,97 @@ out:
 static void * tests_run_snapshot(void * args)
 {
 	struct tests_ctl * ctl;
-	int subvol_fd;
-//	char * snap_name;
-//	uint64_t transid;
+	int dstfd, subvol_fd;
+	char * dstdir;
 	size_t len;
 	int err;
+	void * ret = NULL;
 
 	struct btrfs_ioctl_vol_args_v2	async_vol_args;
 	struct btrfs_ioctl_vol_args 	vol_args;
+
+	struct tests_log_snapshot * snap_log;
+
 
 	ctl = (struct tests_ctl *) args;
 
 	if (!ctl || !ctl->subvolume_path)
 		return ERR_PTR(-EINVAL);
 
-	subvol_fd = open(ctl->subvolume_path, O_RDONLY);
-	if (subvol_fd < 0) {
+	dstdir = ctl->destination_path;
+
+	dstfd = open(dstdir, O_RDONLY);
+	if (dstfd < 0) {
 		perror("opening subvolume path");
 		return ERR_PTR(-errno);
 	}
 
+	subvol_fd = open(dstdir, O_RDONLY);
+	if (subvol_fd < 0) {
+		perror("opening subvolume path");
+		goto err_close_dst;
+	}
 
 	async_vol_args.fd = subvol_fd;
 	async_vol_args.flags = BTRFS_SUBVOL_CREATE_ASYNC;
 	async_vol_args.transid = 0;
 
-	len = strlen(ctl->snapshot_path);
+	len = strlen(ctl->snapshot_name);
 	len = (len > BTRFS_SUBVOL_NAME_MAX ? BTRFS_SUBVOL_NAME_MAX : len);
 
 	memset(async_vol_args.name, 0, BTRFS_SUBVOL_NAME_MAX + 1);
-	memcpy(async_vol_args.name, ctl->snapshot_path, len);
+	memcpy(async_vol_args.name, ctl->snapshot_name, len);
 
-	__log_snapshot_now(ctl, TESTS_LOG_SNAP_CREATE, 0);
+	snap_log = __log_snapshot_start();
+	if (!snap_log) {
+		errno = -ENOMEM;
+		goto err_close;
+	}
 
-	err = ioctl(subvol_fd, BTRFS_IOC_SNAP_CREATE_V2, &async_vol_args);
+	gettimeofday(&snap_log->create, NULL);
+
+	err = ioctl(dstfd, BTRFS_IOC_SNAP_CREATE_V2, &async_vol_args);
 	if (err < 0) {
 		perror("creating async snapshot");
-		return ERR_PTR(-errno);
+		goto err_close;
 	}
 
-	__log_snapshot_now(ctl, TESTS_LOG_SNAP_WAIT_BEGIN, async_vol_args.transid);
+	gettimeofday(&snap_log->wait_begin, NULL);
 
-	err = ioctl(subvol_fd, BTRFS_IOC_WAIT_SYNC, &async_vol_args.transid);
+	err = ioctl(dstfd, BTRFS_IOC_WAIT_SYNC, &async_vol_args.transid);
 	if (err < 0) {
 		perror("waiting for snapshot");
-		return ERR_PTR(-errno);
+		goto err_close;
 	}
 
-	__log_snapshot_now(ctl, TESTS_LOG_SNAP_WAIT_END, async_vol_args.transid);
+	gettimeofday(&snap_log->wait_end, NULL);
 
 	sleep(ctl->options.snap_opts.sleep);
 
-	vol_args.fd = subvol_fd;
+	vol_args.fd = async_vol_args.fd;
 	memcpy(vol_args.name, async_vol_args.name, BTRFS_SUBVOL_NAME_MAX);
 
-	__log_snapshot_now(ctl, TESTS_LOG_SNAP_DESTROY_BEGIN, 
-			async_vol_args.transid);
+	gettimeofday(&snap_log->destroy_begin, NULL);
 
-	err = ioctl(subvol_fd, BTRFS_IOC_SNAP_DESTROY, &vol_args);
+	err = ioctl(dstfd, BTRFS_IOC_SNAP_DESTROY, &vol_args);
 	if (err < 0) {
 		perror("destroying snapshot");
-		return ERR_PTR(-errno);
+		goto err_close;
 	}
 
-	__log_snapshot_now(ctl, TESTS_LOG_SNAP_DESTROY_END, 
-			async_vol_args.transid);
+	gettimeofday(&snap_log->destroy_end, NULL);
+	__log_snapshot_finish(ctl, snap_log);
 
-	return NULL;
+err_close:
+	close(subvol_fd);
+err_close_dst:
+	close(dstfd);
+
+	if (err < 0) {
+		ret = ERR_PTR(-errno);
+	}
+
+	return ret;
 }
 
 
@@ -200,6 +245,7 @@ int tests_run(struct tests_ctl * ctl)
 
 	err = pthread_create(&tid_chmod, NULL, tests_run_chmod, (void *) ctl);
 	if (err) {
+		fprintf(stderr, "Error creating thread: %s\n", strerror(err));
 		return (-err);
 	}
 
@@ -212,9 +258,11 @@ int tests_run(struct tests_ctl * ctl)
 		if (err_ptr && IS_ERR(err_ptr)) {
 			fprintf(stderr, "Aborting due to error on snapshots: %s\n",
 					strerror((-PTR_ERR(err_ptr))));
-			ctl->keep_running = 1;
+			ctl->keep_running = 0;
 			break;
 		}
+
+		ctl->keep_running = 0;
 
 		if (ctl->options.runtime > 0) {
 			ctl->keep_running =
@@ -224,6 +272,11 @@ int tests_run(struct tests_ctl * ctl)
 
 	printf("Snapshot'ing finished.\n");
 
+	err = pthread_join(tid_chmod, NULL);
+	if (err) {
+		fprintf(stderr, "Error joining thread: %s\n", strerror(err));
+		return (-err);
+	}
 
 	return 0;
 }
