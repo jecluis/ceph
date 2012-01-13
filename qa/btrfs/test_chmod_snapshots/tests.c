@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
@@ -36,17 +37,43 @@ static mode_t modes[TOTAL_MODES] = {
 		S_IROTH, S_IWOTH, S_IXOTH
 };
 
+
+static int __get_bucket(uint32_t latency) {
+
+	int i;
+
+	for (i = 0; i < TESTS_NUM_BUCKETS; i ++) {
+		if (latency < TESTS_BUCKETS_LIMITS[i])
+			return i;
+	}
+
+	return TESTS_NUM_BUCKETS - 1;
+}
+
 static void __log_chmod(struct tests_ctl * ctl, int tid,
-		struct timeval * start, struct timeval * end)
+		struct timeval * start, struct timeval * end,
+		uint8_t start_state, uint8_t end_state)
 {
-	struct tests_log_chmod_result * results;
+	struct tests_log_chmod * log;
 	uint32_t latency;
-	uint8_t state;
 
 	if (!ctl || !start || !end)
 		return;
 
+	latency = (uint32_t) (tv2ts(end) - tv2ts(start));
+
+	log = &ctl->log_chmod[tid];
+	log->buckets[__get_bucket(latency)][start_state][end_state] ++;
+
+	if (log->max < latency)
+		log->max = latency;
+	if (log->min > latency)
+		log->min = latency;
+	log->total_latency += latency;
+
+#if 0
 	state = __sync_add_and_fetch(&ctl->current_state, 0);
+
 	results = &ctl->log_chmod[tid].results[state];
 
 	latency = (uint32_t) (tv2ts(end) - tv2ts(start));
@@ -64,6 +91,7 @@ static void __log_chmod(struct tests_ctl * ctl, int tid,
 
 	results->latency_sum += latency;
 	results->latency_total ++;
+#endif
 
 #if 0
 	log = (struct tests_log_chmod *) malloc(sizeof(*log));
@@ -139,6 +167,8 @@ static void * tests_run_chmod(void * args)
 	struct timeval tv_start, tv_end;
 	int err;
 	int i;
+	uint8_t state_start, state_end;
+	uint32_t version_start, version_end;
 
 	if (!args)
 		goto out;
@@ -157,11 +187,16 @@ static void * tests_run_chmod(void * args)
 			perror("obtaining time of day");
 			break;
 		}
+		state_start = __sync_add_and_fetch(&ctl->current_state, 0);
+		version_start = __sync_add_and_fetch(&ctl->current_version, 0);
 
 		err = chmod(ctl->options.chmod_opts.filename,
 				modes[(i ++)%TOTAL_MODES]);
 		if (err < 0) {
-			perror("chmod'ing");
+		    fprintf(stderr, "chmod'ing %s @ %s: %s\n", 
+			    ctl->options.chmod_opts.filename,
+			    get_current_dir_name(),
+			    strerror(errno));
 			break;
 		}
 
@@ -170,11 +205,22 @@ static void * tests_run_chmod(void * args)
 			perror("obtaining time of day");
 			break;
 		}
+		state_end = __sync_add_and_fetch(&ctl->current_state, 0);
+		version_end = __sync_add_and_fetch(&ctl->current_version, 0);
 
-		__log_chmod(ctl, thread_args->tid, &tv_start, &tv_end);
+//		if ((version_end > version_start) && (state_end == TESTS_STATE_NONE)) {
+		if (version_end > version_start) {
+			printf("chmod > start state: %s (%d), end state: %s (%d)\n",
+					TESTS_STATE_NAME[state_start], version_start,
+					TESTS_STATE_NAME[state_end], version_end);
+			state_end = state_end + 1;
+		}
+
+		__log_chmod(ctl, thread_args->tid, &tv_start, &tv_end,
+				state_start, state_end);
 	} while(ctl->keep_running);
 
-	printf("Chmod'ing finished.\n");
+	printf("Chmod'ing finished (with %d ops).\n", i);
 
 
 out:
@@ -231,6 +277,7 @@ static void * tests_run_snapshot(void * args)
 		goto err_close;
 	}
 
+	printf("Creating snapshot\n");
 	gettimeofday(&snap_log->create, NULL);
 	__snapshot_set_state(ctl, TESTS_STATE_CREATE);
 
@@ -252,7 +299,8 @@ static void * tests_run_snapshot(void * args)
 
 	gettimeofday(&snap_log->wait_end, NULL);
 	__snapshot_set_state(ctl, TESTS_STATE_WAIT_END);
-
+	__sync_fetch_and_add(&ctl->current_version, 1);
+	
 	sleep(ctl->options.snap_opts.sleep);
 
 	vol_args.fd = async_vol_args.fd;
@@ -328,9 +376,9 @@ int tests_run(struct tests_ctl * ctl)
 
 	start_time = time(NULL);
 	do {
-//		__snapshot_set_state(ctl, TESTS_STATE_NONE);
+		__snapshot_set_state(ctl, TESTS_STATE_NONE);
 		if (ctl->options.snap_opts.delay) {
-			printf("Delaying snapshot by %d secs\n", ctl->options.snap_opts.delay);
+	//		printf("Delaying snapshot by %d secs\n", ctl->options.snap_opts.delay);
 			sleep(ctl->options.snap_opts.delay);
 		}
 

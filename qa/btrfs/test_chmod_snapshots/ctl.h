@@ -25,6 +25,7 @@ struct tests_snap_opts {
 struct tests_options {
 	char * 					subvolume_path;
 	uint8_t 				init;
+	uint8_t					plot;
 	uint32_t 				runtime;
 
 	struct tests_chmod_opts	chmod_opts;
@@ -45,6 +46,7 @@ struct tests_ctl {
 //	uint64_t 				snaps_destroyed;
 
 	uint8_t					current_state;
+	uint32_t				current_version;
 
 	int						chmod_threads;
 //	uint64_t * 				chmods_performed;

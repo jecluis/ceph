@@ -26,6 +26,7 @@ void tests_options_init(struct tests_options * options)
 		return;
 
 	options->init = 0;
+	options->plot = 0;
 	options->runtime = 0;
 	options->subvolume_path = NULL;
 
@@ -100,6 +101,7 @@ int tests_ctl_init(struct tests_ctl * ctl, char * subvol, char * snap,
 //	ctl->snaps_destroyed = 0;
 	ctl->chmod_threads = (chmod_threads ? chmod_threads : 1);
 	ctl->current_state = TESTS_STATE_NONE;
+	ctl->current_version = 0;
 
 	err = -ENOMEM;
 	size = sizeof(*ctl->log_chmod) * ctl->chmod_threads;
@@ -110,14 +112,20 @@ int tests_ctl_init(struct tests_ctl * ctl, char * subvol, char * snap,
 	}
 	memset(ctl->log_chmod, 0, size);
 
+	printf("log size: %d\n", size);
+	printf("pos[0][0][0]: %d\n", ctl->log_chmod[0].buckets[0][0][0]);
 
 	for (i = 0; i < ctl->chmod_threads; i ++) {
+		ctl->log_chmod[i].max = 0;
+		ctl->log_chmod[i].min = UINT32_MAX;
+#if 0
 		for (j = 0; j < TESTS_NUM_STATES; j ++) {
 			/* we won't have negative latency, so lets just
 			 * say our minimum is zero. */
 			ctl->log_chmod[i].results[j].latency_max = 0;
 			ctl->log_chmod[i].results[j].latency_min = UINT32_MAX;
 		}
+#endif
 	}
 
 #if 0

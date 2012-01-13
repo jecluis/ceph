@@ -5,21 +5,45 @@
 #include "list.h"
 
 #define TESTS_STATE_NONE			(0x00)
-#define TESTS_STATE_CREATE	 		(0x01)
-#define TESTS_STATE_WAIT_BEGIN		(0x02)
-#define TESTS_STATE_WAIT_END		(0x03)
-#define TESTS_STATE_DESTROY_BEGIN	(0x04)
-#define TESTS_STATE_POST_DESTROY	(0x05)
+#define TESTS_STATE_NEXT_NONE		(0x01)
+#define TESTS_STATE_CREATE	 		(0x02)
+#define TESTS_STATE_CREATE_NEXT		(0x03)
+#define TESTS_STATE_WAIT_BEGIN		(0x04)
+#define TESTS_STATE_WAIT_BEGIN_NEXT (0x05)
+#define TESTS_STATE_WAIT_END		(0x06)
+#define TESTS_STATE_WAIT_END_NEXT	(0x07)
+#define TESTS_STATE_DESTROY_BEGIN	(0x08)
+#define TESTS_STATE_DB_NEXT			(0x09)
+#define TESTS_STATE_POST_DESTROY	(0x0A)
+#define TESTS_STATE_PD_NEXT			(0x0B)
 
-#define TESTS_NUM_STATES 6
+#define TESTS_NUM_STATES 			(0x0B+1)
 
-static char * TESTS_STATE_NAME[TESTS_NUM_STATES] = {
+#define TESTS_NUM_BUCKETS			17
+
+static const int TESTS_BUCKETS_LIMITS[TESTS_NUM_BUCKETS] = {
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+		50, 100, 200,
+		1000,
+		1000000,
+		2000000,
+		0
+};
+
+
+static const char * TESTS_STATE_NAME[TESTS_NUM_STATES] = {
 	"NONE",
+	"NONE (NEXT)",
 	"CREATE",
+	"CREATE (NEXT)",
 	"WAIT BEGIN",
+	"WAIT BEGIN (NEXT)",
 	"WAIT END",
+	"WAIT END (NEXT)",
 	"DESTROY BEGIN",
-	"POST DESTROY"
+	"DESTROY BEGIN (NEXT)",
+	"POST DESTROY",
+	"POST DESTROY (NEXT)",
 };
 
 struct tests_log_chmod_result {
@@ -30,6 +54,7 @@ struct tests_log_chmod_result {
 	uint32_t latency_total;
 };
 
+#if 0
 struct tests_log_chmod {
 //	struct list_head lst;
 //
@@ -37,6 +62,16 @@ struct tests_log_chmod {
 //	uint64_t end;
 
 	struct tests_log_chmod_result results[TESTS_NUM_STATES];
+};
+#endif
+
+struct tests_log_chmod {
+	uint32_t buckets[TESTS_NUM_BUCKETS][TESTS_NUM_STATES][TESTS_NUM_STATES];
+
+	uint32_t max;
+	uint32_t min;
+
+	uint32_t total_latency;
 };
 
 struct tests_log_snapshot {

@@ -28,6 +28,7 @@ static struct option longopts[] = {
 		{ "delay", required_argument, NULL, 'd' },
 		{ "threads", required_argument, NULL, 't' },
 		{ "init", no_argument, NULL, 'i' },
+		{ "plot", no_argument, NULL, 'p' },
 		{ "help", no_argument, NULL, 'h' },
 		{ NULL, 0, NULL, 0 }
 };
@@ -45,6 +46,7 @@ void print_usage(const char * name)
 		"        -s, --sleep=VAL          Sleep (in seconds) during snapshots\n"
 		"        -d, --delay=VAL          Delay (in seconds) between snapshots\n"
 		"        -t, --threads=VAL        Number of threads for chmod test\n"
+		"        -p, --plot               Output GnuPlot data instead of usual dump\n"
 		"        -h, --help               This information\n"
 		"\n", name
 	);
@@ -65,7 +67,7 @@ int do_getopt(int * argc, char ** argv, struct tests_options * options)
 
 	tests_options_init(options);
 
-	while (((ch = getopt_long(*argc, argv, "s:d:t:ih", longopts, NULL)) != -1)
+	while (((ch = getopt_long(*argc, argv, "s:d:t:iph", longopts, NULL)) != -1)
 			&& !cleanup) {
 		switch (ch) {
 		case 'i':
@@ -79,6 +81,9 @@ int do_getopt(int * argc, char ** argv, struct tests_options * options)
 			break;
 		case 't':
 			options->chmod_opts.num_threads = strtol(optarg, NULL, 10);
+			break;
+		case 'p':
+			options->plot = 1;
 			break;
 		case 'h':
 			print_usage(name);
@@ -202,17 +207,68 @@ void do_print_results(struct tests_ctl * ctl)
 	uint64_t chmods_performed = 0;
 
 	uint32_t max, min;
-	uint64_t sum, total;
+	uint64_t sum, total = 0, plot_sum = 0;
 
 	int cnt = 0;
-	int i, j;
+	int t_i, bucket_i, start_i, end_i;
 
 	if (!ctl) {
 		fprintf(stderr, "do_print_results: NULL ctl struct\n");
 		return;
 	}
 
+	if (ctl->options.plot) {
+		printf("# <bucket size> <count>\n");
+	}
+	for (bucket_i = 0; bucket_i < TESTS_NUM_BUCKETS; bucket_i ++) {
+		if (!ctl->options.plot) {
+			if (TESTS_BUCKETS_LIMITS[bucket_i]) {
+				printf("latency < %d:\n", 
+					TESTS_BUCKETS_LIMITS[bucket_i]);
+			} else {
+				printf("latency >= %d:\n", 
+					TESTS_BUCKETS_LIMITS[bucket_i-1]);
+			}
+		}
 
+		plot_sum = 0;
+		for (start_i = 0; start_i < TESTS_NUM_STATES; start_i += 2) {
+			for (end_i = 0; end_i < TESTS_NUM_STATES; end_i ++) {
+
+				sum = 0;
+				for (t_i = 0; t_i < ctl->chmod_threads; t_i ++) {
+					log_chmod = &ctl->log_chmod[t_i];
+
+					cnt = log_chmod->buckets[bucket_i][start_i][end_i];
+					if (!cnt)
+						continue;
+
+					sum += cnt;
+				}
+
+				if ((sum != 0) && (!ctl->options.plot)) {
+					printf("    %s -- %s: %lu\n",
+							TESTS_STATE_NAME[start_i],
+							TESTS_STATE_NAME[end_i], 
+							sum);
+				} else {
+					plot_sum += sum;
+				}
+				total += sum;
+			}
+		}
+
+		if (ctl->options.plot) {
+			if (bucket_i+1 < TESTS_NUM_BUCKETS) {
+				printf("<%d %lu\n", TESTS_BUCKETS_LIMITS[bucket_i], plot_sum);
+			} else
+				printf(">=%d %lu\n", TESTS_BUCKETS_LIMITS[bucket_i-1], plot_sum);
+		}
+	}
+
+	printf("\ntotal chmods = %lu\n", total);
+
+#if 0
 	for (i = 0; cnt < ctl->chmod_threads; cnt ++) {
 		for (j = 0; j < TESTS_NUM_STATES; j ++)
 		chmods_performed += ctl->log_chmod[cnt].results[j].latency_total;
@@ -250,6 +306,7 @@ void do_print_results(struct tests_ctl * ctl)
 				((double) sum) / ((double) total));
 	}
 
+#endif
 	for (lst_snap_ptr = ctl->log_snapshot.next; !list_empty(lst_snap_ptr); ) {
 
 		log_snap = list_entry(lst_snap_ptr, struct tests_log_snapshot, lst);
@@ -258,6 +315,7 @@ void do_print_results(struct tests_ctl * ctl)
 		list_del(&log_snap->lst);
 		free(log_snap);
 	}
+
 #if 0
 	cnt = 0;
 
@@ -426,7 +484,7 @@ int main(int argc, char ** argv)
 	}
 	gettimeofday(&tv_end, NULL);
 
-	printf("Test ran for %llu usecs\n", 
+	printf("Test ran for %lu usecs\n", 
 			(tv2ts(&tv_end) - tv2ts(&tv_start)));
 
 	do_print_results(&ctl);
