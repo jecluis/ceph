@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <signal.h>
 #include <unistd.h>
+#include <limits.h>
 
 #include "ctl.h"
 #include "err.h"
@@ -143,11 +144,6 @@ int do_tests(struct tests_ctl * ctl)
 	return ret;
 }
 
-static inline uint64_t tv2ts(struct timeval * tv)
-{
-	return ((tv->tv_sec * 1000000) + tv->tv_usec);
-}
-
 static struct tests_log_chmod * __results_obtain_chmod(struct tests_ctl * ctl,
 		struct tests_log_snapshot * snap)
 {
@@ -156,7 +152,7 @@ static struct tests_log_chmod * __results_obtain_chmod(struct tests_ctl * ctl,
 
 	if (!ctl || !snap)
 		return NULL;
-
+#if 0
 	i = 0;
 	while (i < ctl->chmod_threads) {
 		if (list_empty(ctl->log_chmod[i])) {
@@ -179,13 +175,14 @@ static struct tests_log_chmod * __results_obtain_chmod(struct tests_ctl * ctl,
 		list_del(&log->lst);
 		return log;
 	}
-
+#endif
 	return NULL;
 }
 
 void do_print_results(struct tests_ctl * ctl)
 {
 	struct tests_log_chmod * log_chmod;
+	struct tests_log_chmod_result * log_chmod_result;
 	struct tests_log_snapshot * log_snap;
 	uint64_t chmod_start_ts, chmod_end_ts;
 	uint64_t chmod_diff;
@@ -204,7 +201,11 @@ void do_print_results(struct tests_ctl * ctl)
 
 	uint64_t chmods_performed = 0;
 
+	uint32_t max, min;
+	uint64_t sum, total;
+
 	int cnt = 0;
+	int i, j;
 
 	if (!ctl) {
 		fprintf(stderr, "do_print_results: NULL ctl struct\n");
@@ -212,15 +213,54 @@ void do_print_results(struct tests_ctl * ctl)
 	}
 
 
-	for (cnt = 0; cnt < ctl->chmod_threads; cnt ++)
-		chmods_performed += ctl->chmods_performed[cnt];
+	for (i = 0; cnt < ctl->chmod_threads; cnt ++) {
+		for (j = 0; j < TESTS_NUM_STATES; j ++)
+		chmods_performed += ctl->log_chmod[cnt]->results[j]->latency_total;
+	}
 
-	cnt = 0;
-
-	//lst_chmod_ptr = ctl->log_chmod.next;
 	for (lst_snap_ptr = ctl->log_snapshot.next; !list_empty(lst_snap_ptr); ) {
 
 		log_snap = list_entry(lst_snap_ptr, struct tests_log_snapshot, lst);
+
+		for (i = 0; i < TESTS_NUM_STATES; i ++) {
+
+			max = 0;
+			min = UINT32_MAX;
+			sum = total = 0;
+
+			for (j = 0; j < ctl->chmod_threads; j ++) {
+
+				log_chmod = ctl->log_chmod[j];
+				log_chmod_result = log_chmod->results[i];
+
+				if (max < log_chmod_result->latency_max)
+					max = log_chmod_result->latency_max;
+
+				if (min > log_chmod_result->latency_min)
+					min = log_chmod_result->latency_min;
+
+				sum += log_chmod_result->latency_sum;
+				total += log_chmod_result->latency_total;
+			}
+			printf( "STATE %d:\n"
+					"    max (us) = %d\n"
+					"    max (s)  = %f\n"
+					"    min (us) = %d\n"
+					"    min (s)  = %f\n"
+					"    avg (us) = %f\n",
+					max, ((double) max / 1000000),
+					min, ((double) min / 1000000),
+					((double) sum) / ((double) total));
+		}
+
+		lst_snap_ptr = lst_snap_ptr->next;
+		list_del(&log_snap->lst);
+		free(log_snap);
+	}
+#if 0
+	cnt = 0;
+
+	//lst_chmod_ptr = ctl->log_chmod.next;
 
 		while ((log_chmod = __results_obtain_chmod(ctl, log_snap))) {
 
@@ -314,7 +354,7 @@ lbl_next:
 			"affected by delete (us):    %f\n",
 			unaffected_avg, affected_create_avg,
 			affected_wait_avg, affected_delete_avg);
-
+#endif
 #if 0
 	printf(	"unaffected chmods avg (us): %llu, %llu\n"
 			"affected by create (us):    %llu, %llu\n"

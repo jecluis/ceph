@@ -39,11 +39,28 @@ static mode_t modes[TOTAL_MODES] = {
 static void __log_chmod(struct tests_ctl * ctl, int tid,
 		struct timeval * start, struct timeval * end)
 {
-	struct tests_log_chmod * log;
+	struct tests_log_chmod_result * results;
+	uint32_t latency;
+	uint8_t state;
 
 	if (!ctl || !start || !end)
 		return;
 
+	state = __sync_add_and_fetch(&ctl->current_state, 0);
+	results = &ctl->log_chmod[tid].results[state];
+
+	latency = (uint32_t) (tv2ts(end) - tv2ts(start));
+
+	if (results->latency_max < latency)
+		results->latency_max = latency;
+
+	if (results->latency_min > latency)
+		results->latency_min = latency;
+
+	results->latency_sum += latency;
+	results->latency_total ++;
+
+#if 0
 	log = (struct tests_log_chmod *) malloc(sizeof(*log));
 	if (!log)
 		return;
@@ -54,6 +71,7 @@ static void __log_chmod(struct tests_ctl * ctl, int tid,
 	ctl->chmods_performed[tid] ++;
 
 	list_add_tail(&log->lst, ctl->log_chmod[tid]);
+#endif
 }
 
 #if 0
@@ -97,6 +115,15 @@ static void __log_snapshot_finish(struct tests_ctl * ctl,
 		struct tests_log_snapshot * log)
 {
 	list_add_tail(&log->lst, &ctl->log_snapshot);
+}
+
+static void __snapshot_set_state(struct tests_ctl * ctl, uint8_t state)
+{
+	if (!ctl)
+		return;
+
+	uint8_t curr_state = ctl->current_state;
+	__sync_val_compare_and_swap(&ctl->current_state, curr_state, state);
 }
 
 
@@ -200,6 +227,7 @@ static void * tests_run_snapshot(void * args)
 	}
 
 	gettimeofday(&snap_log->create, NULL);
+	__snapshot_set_state(ctl, TESTS_STATE_CREATE);
 
 	err = ioctl(dstfd, BTRFS_IOC_SNAP_CREATE_V2, &async_vol_args);
 	if (err < 0) {
@@ -208,6 +236,7 @@ static void * tests_run_snapshot(void * args)
 	}
 
 	gettimeofday(&snap_log->wait_begin, NULL);
+	__snapshot_set_state(ctl, TESTS_STATE_WAIT_BEGIN);
 
 	err = ioctl(dstfd, BTRFS_IOC_WAIT_SYNC, &async_vol_args.transid);
 	if (err < 0) {
@@ -217,6 +246,7 @@ static void * tests_run_snapshot(void * args)
 //	ctl->keep_running = 0;
 
 	gettimeofday(&snap_log->wait_end, NULL);
+	__snapshot_set_state(ctl, TESTS_STATE_NONE);
 
 	sleep(ctl->options.snap_opts.sleep);
 
@@ -224,6 +254,7 @@ static void * tests_run_snapshot(void * args)
 	memcpy(vol_args.name, async_vol_args.name, BTRFS_SUBVOL_NAME_MAX);
 
 	gettimeofday(&snap_log->destroy_begin, NULL);
+	__snapshot_set_state(ctl, TESTS_STATE_DESTROY_BEGIN);
 
 	err = ioctl(dstfd, BTRFS_IOC_SNAP_DESTROY, &vol_args);
 	if (err < 0) {
@@ -232,6 +263,7 @@ static void * tests_run_snapshot(void * args)
 	}
 
 	gettimeofday(&snap_log->destroy_end, NULL);
+	__snapshot_set_state(ctl, TESTS_STATE_NONE);
 	__log_snapshot_finish(ctl, snap_log);
 
 err_close:
