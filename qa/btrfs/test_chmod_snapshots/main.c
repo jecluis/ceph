@@ -215,43 +215,44 @@ void do_print_results(struct tests_ctl * ctl)
 
 	for (i = 0; cnt < ctl->chmod_threads; cnt ++) {
 		for (j = 0; j < TESTS_NUM_STATES; j ++)
-		chmods_performed += ctl->log_chmod[cnt]->results[j]->latency_total;
+		chmods_performed += ctl->log_chmod[cnt].results[j].latency_total;
+	}
+
+	for (i = 0; i < TESTS_NUM_STATES; i ++) {
+
+		max = 0;
+		min = UINT32_MAX;
+		sum = total = 0;
+
+		for (j = 0; j < ctl->chmod_threads; j ++) {
+
+			log_chmod = &ctl->log_chmod[j];
+			log_chmod_result = &log_chmod->results[i];
+
+			if (max < log_chmod_result->latency_max)
+				max = log_chmod_result->latency_max;
+
+			if (min > log_chmod_result->latency_min)
+				min = log_chmod_result->latency_min;
+
+			sum += log_chmod_result->latency_sum;
+			total += log_chmod_result->latency_total;
+		}
+		printf( "STATE %s:\n"
+				"    max (us) = %d\n"
+				"    max (s)  = %f\n"
+				"    min (us) = %d\n"
+				"    min (s)  = %f\n"
+				"    avg (us) = %f\n",
+				TESTS_STATE_NAME[i],
+				max, ((double) max / 1000000),
+				min, ((double) min / 1000000),
+				((double) sum) / ((double) total));
 	}
 
 	for (lst_snap_ptr = ctl->log_snapshot.next; !list_empty(lst_snap_ptr); ) {
 
 		log_snap = list_entry(lst_snap_ptr, struct tests_log_snapshot, lst);
-
-		for (i = 0; i < TESTS_NUM_STATES; i ++) {
-
-			max = 0;
-			min = UINT32_MAX;
-			sum = total = 0;
-
-			for (j = 0; j < ctl->chmod_threads; j ++) {
-
-				log_chmod = ctl->log_chmod[j];
-				log_chmod_result = log_chmod->results[i];
-
-				if (max < log_chmod_result->latency_max)
-					max = log_chmod_result->latency_max;
-
-				if (min > log_chmod_result->latency_min)
-					min = log_chmod_result->latency_min;
-
-				sum += log_chmod_result->latency_sum;
-				total += log_chmod_result->latency_total;
-			}
-			printf( "STATE %d:\n"
-					"    max (us) = %d\n"
-					"    max (s)  = %f\n"
-					"    min (us) = %d\n"
-					"    min (s)  = %f\n"
-					"    avg (us) = %f\n",
-					max, ((double) max / 1000000),
-					min, ((double) min / 1000000),
-					((double) sum) / ((double) total));
-		}
 
 		lst_snap_ptr = lst_snap_ptr->next;
 		list_del(&log_snap->lst);

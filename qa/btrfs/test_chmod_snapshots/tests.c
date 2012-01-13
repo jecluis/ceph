@@ -51,6 +51,11 @@ static void __log_chmod(struct tests_ctl * ctl, int tid,
 
 	latency = (uint32_t) (tv2ts(end) - tv2ts(start));
 
+	if (latency > 1000000) {
+		printf("tid: %d, start: %llu, end: %llu\n",
+				tid, start->tv_sec, end->tv_sec);
+	}
+
 	if (results->latency_max < latency)
 		results->latency_max = latency;
 
@@ -246,7 +251,7 @@ static void * tests_run_snapshot(void * args)
 //	ctl->keep_running = 0;
 
 	gettimeofday(&snap_log->wait_end, NULL);
-	__snapshot_set_state(ctl, TESTS_STATE_NONE);
+	__snapshot_set_state(ctl, TESTS_STATE_WAIT_END);
 
 	sleep(ctl->options.snap_opts.sleep);
 
@@ -263,8 +268,8 @@ static void * tests_run_snapshot(void * args)
 	}
 
 	gettimeofday(&snap_log->destroy_end, NULL);
-	__snapshot_set_state(ctl, TESTS_STATE_NONE);
 	__log_snapshot_finish(ctl, snap_log);
+	__snapshot_set_state(ctl, TESTS_STATE_POST_DESTROY);
 
 err_close:
 	close(subvol_fd);
@@ -323,8 +328,11 @@ int tests_run(struct tests_ctl * ctl)
 
 	start_time = time(NULL);
 	do {
-		if (ctl->options.snap_opts.delay)
+//		__snapshot_set_state(ctl, TESTS_STATE_NONE);
+		if (ctl->options.snap_opts.delay) {
+			printf("Delaying snapshot by %d secs\n", ctl->options.snap_opts.delay);
 			sleep(ctl->options.snap_opts.delay);
+		}
 
 		err_ptr = tests_run_snapshot(ctl);
 		if (err_ptr && IS_ERR(err_ptr)) {

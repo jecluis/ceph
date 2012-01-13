@@ -9,10 +9,18 @@
 #define TESTS_STATE_WAIT_BEGIN		(0x02)
 #define TESTS_STATE_WAIT_END		(0x03)
 #define TESTS_STATE_DESTROY_BEGIN	(0x04)
-#define TESTS_STATE_DESTROY_END		(0x05)
+#define TESTS_STATE_POST_DESTROY	(0x05)
 
 #define TESTS_NUM_STATES 6
 
+static char * TESTS_STATE_NAME[TESTS_NUM_STATES] = {
+	"NONE",
+	"CREATE",
+	"WAIT BEGIN",
+	"WAIT END",
+	"DESTROY BEGIN",
+	"POST DESTROY"
+};
 
 struct tests_log_chmod_result {
 	uint32_t latency_max;

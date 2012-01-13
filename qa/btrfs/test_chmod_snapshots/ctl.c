@@ -115,8 +115,8 @@ int tests_ctl_init(struct tests_ctl * ctl, char * subvol, char * snap,
 		for (j = 0; j < TESTS_NUM_STATES; j ++) {
 			/* we won't have negative latency, so lets just
 			 * say our minimum is zero. */
-			ctl->log_chmod[i]->results[j]->latency_max = 0;
-			ctl->log_chmod[i]->results[j]->latency_min = UINT32_MAX;
+			ctl->log_chmod[i].results[j].latency_max = 0;
+			ctl->log_chmod[i].results[j].latency_min = UINT32_MAX;
 		}
 	}
 
