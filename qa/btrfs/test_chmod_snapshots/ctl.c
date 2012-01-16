@@ -96,9 +96,6 @@ int tests_ctl_init(struct tests_ctl * ctl, char * subvol, char * snap,
 		return err;
 
 	ctl->keep_running = 1;
-//	ctl->chmods_performed = 0;
-//	ctl->snaps_created = 0;
-//	ctl->snaps_destroyed = 0;
 	ctl->chmod_threads = (chmod_threads ? chmod_threads : 1);
 	ctl->current_state = TESTS_STATE_NONE;
 	ctl->current_version = 0;
@@ -118,37 +115,8 @@ int tests_ctl_init(struct tests_ctl * ctl, char * subvol, char * snap,
 	for (i = 0; i < ctl->chmod_threads; i ++) {
 		ctl->log_chmod[i].max = 0;
 		ctl->log_chmod[i].min = UINT32_MAX;
-#if 0
-		for (j = 0; j < TESTS_NUM_STATES; j ++) {
-			/* we won't have negative latency, so lets just
-			 * say our minimum is zero. */
-			ctl->log_chmod[i].results[j].latency_max = 0;
-			ctl->log_chmod[i].results[j].latency_min = UINT32_MAX;
-		}
-#endif
 	}
 
-#if 0
-	ctl->chmods_performed = (uint64_t *)
-			malloc(sizeof(*ctl->chmods_performed) * ctl->chmod_threads);
-	if (!ctl->chmods_performed) {
-		tests_ctl_cleanup_paths(ctl);
-		free(ctl->log_chmod);
-		goto out;
-	}
-
-	for (i = 0; i < ctl->chmod_threads; i ++) {
-		ctl->log_chmod[i] = (struct tests_log_chmod *)
-			malloc(sizeof(*ctl->log_chmod[i]));
-		if (!ctl->log_chmod[i]) {
-			goto out;
-		}
-		INIT_LIST_HEAD(ctl->log_chmod[i]);
-		ctl->chmods_performed[i] = 0;
-	}
-#endif
-
-//	INIT_LIST_HEAD(&ctl->log_chmod);
 	INIT_LIST_HEAD(&ctl->log_snapshot);
 
 	err = 0;

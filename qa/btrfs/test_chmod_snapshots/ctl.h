@@ -42,15 +42,10 @@ struct tests_ctl {
 
 	uint8_t 				keep_running;
 
-//	uint64_t 				snaps_created;
-//	uint64_t 				snaps_destroyed;
-
 	uint8_t					current_state;
 	uint32_t				current_version;
 
 	int						chmod_threads;
-//	uint64_t * 				chmods_performed;
-//	struct list_head **		log_chmod;
 	struct tests_log_chmod * log_chmod;
 
 	struct list_head 		log_snapshot;

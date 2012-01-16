@@ -54,17 +54,6 @@ struct tests_log_chmod_result {
 	uint32_t latency_total;
 };
 
-#if 0
-struct tests_log_chmod {
-//	struct list_head lst;
-//
-//	uint64_t start;
-//	uint64_t end;
-
-	struct tests_log_chmod_result results[TESTS_NUM_STATES];
-};
-#endif
-
 struct tests_log_chmod {
 	uint32_t buckets[TESTS_NUM_BUCKETS][TESTS_NUM_STATES][TESTS_NUM_STATES];
 
@@ -82,9 +71,6 @@ struct tests_log_snapshot {
 	struct timeval wait_end;
 	struct timeval destroy_begin;
 	struct timeval destroy_end;
-
-//	uint8_t op;
-//	uint64_t transid;
 };
 
 struct tests_ctl;

@@ -116,12 +116,6 @@ int do_world_init(struct tests_ctl * ctl)
 	if (!ctl)
 		return -EINVAL;
 
-#if 0
-	if (ctl->options.init) {
-		// init the whole world
-	}
-#endif
-
 	str = __generate_filename();
 	if (IS_ERR(str))
 		return PTR_ERR(str);
@@ -157,30 +151,7 @@ static struct tests_log_chmod * __results_obtain_chmod(struct tests_ctl * ctl,
 
 	if (!ctl || !snap)
 		return NULL;
-#if 0
-	i = 0;
-	while (i < ctl->chmod_threads) {
-		if (list_empty(ctl->log_chmod[i])) {
-			i ++;
-			continue;
-		}
 
-		log = list_entry(ctl->log_chmod[i]->next, struct tests_log_chmod, lst);
-		if (log->start > tv2ts(&snap->destroy_end)) {
-			/* this condition presumes that the last test performed is always
-			 * a snapshot (since they take longer). Even if it is not, it will
-			 * be negligible, as it will always be only a single chmod more,
-			 * and a single chmod performance gets diluted in the whole
-			 * universe of chmods ran during the test. (one chmod per thread)
-			 */
-			i ++;
-			continue;
-		}
-
-		list_del(&log->lst);
-		return log;
-	}
-#endif
 	return NULL;
 }
 
@@ -268,45 +239,6 @@ void do_print_results(struct tests_ctl * ctl)
 
 	printf("\ntotal chmods = %lu\n", total);
 
-#if 0
-	for (i = 0; cnt < ctl->chmod_threads; cnt ++) {
-		for (j = 0; j < TESTS_NUM_STATES; j ++)
-		chmods_performed += ctl->log_chmod[cnt].results[j].latency_total;
-	}
-
-	for (i = 0; i < TESTS_NUM_STATES; i ++) {
-
-		max = 0;
-		min = UINT32_MAX;
-		sum = total = 0;
-
-		for (j = 0; j < ctl->chmod_threads; j ++) {
-
-			log_chmod = &ctl->log_chmod[j];
-			log_chmod_result = &log_chmod->results[i];
-
-			if (max < log_chmod_result->latency_max)
-				max = log_chmod_result->latency_max;
-
-			if (min > log_chmod_result->latency_min)
-				min = log_chmod_result->latency_min;
-
-			sum += log_chmod_result->latency_sum;
-			total += log_chmod_result->latency_total;
-		}
-		printf( "STATE %s:\n"
-				"    max (us) = %d\n"
-				"    max (s)  = %f\n"
-				"    min (us) = %d\n"
-				"    min (s)  = %f\n"
-				"    avg (us) = %f\n",
-				TESTS_STATE_NAME[i],
-				max, ((double) max / 1000000),
-				min, ((double) min / 1000000),
-				((double) sum) / ((double) total));
-	}
-
-#endif
 	for (lst_snap_ptr = ctl->log_snapshot.next; !list_empty(lst_snap_ptr); ) {
 
 		log_snap = list_entry(lst_snap_ptr, struct tests_log_snapshot, lst);
@@ -315,115 +247,6 @@ void do_print_results(struct tests_ctl * ctl)
 		list_del(&log_snap->lst);
 		free(log_snap);
 	}
-
-#if 0
-	cnt = 0;
-
-	//lst_chmod_ptr = ctl->log_chmod.next;
-
-		while ((log_chmod = __results_obtain_chmod(ctl, log_snap))) {
-
-//		}
-//		for (; !list_empty(lst_chmod_ptr); ) {
-			cnt ++;
-			printf("%d / %llu\r", cnt,
-					(long long unsigned int) chmods_performed);
-
-//			log_chmod = list_entry(lst_chmod_ptr, struct tests_log_chmod, lst);
-			chmod_start_ts = log_chmod->start;
-			chmod_end_ts = log_chmod->end;
-			chmod_diff = (chmod_end_ts - chmod_start_ts);
-
-			if (chmod_end_ts < tv2ts(&log_snap->create)) {
-				unaffected_sum += chmod_diff;
-				unaffected_total ++;
-				goto lbl_next;
-			}
-
-			if (chmod_end_ts < tv2ts(&log_snap->wait_begin)) {
-				// add to wait create stats
-				affected_create_sum += chmod_diff;
-				affected_create_total ++;
-				goto lbl_next;
-			}
-
-			if (chmod_end_ts < tv2ts(&log_snap->wait_end)) {
-				// add to wait stats
-				affected_wait_sum += chmod_diff;
-				affected_wait_total ++;
-				goto lbl_next;
-			}
-
-			if (chmod_end_ts < tv2ts(&log_snap->destroy_begin)) {
-				if (chmod_start_ts < tv2ts(&log_snap->wait_end)) {
-					// add to wait stats
-					affected_wait_sum += chmod_diff;
-					affected_wait_total ++;
-					goto lbl_next;
-				}
-				// okay
-				unaffected_sum += chmod_diff;
-				unaffected_total ++;
-				goto lbl_next;
-			}
-
-			if ((chmod_end_ts < tv2ts(&log_snap->destroy_end))
-					|| (chmod_start_ts < tv2ts(&log_snap->destroy_end))) {
-				// add to delete stats
-				affected_delete_sum += chmod_diff;
-				affected_delete_total ++;
-				goto lbl_next;
-			}
-
-//			continue;
-
-lbl_next:
-			//lst_chmod_ptr = lst_chmod_ptr->next;
-			//list_del(&log_chmod->lst);
-			free(log_chmod);
-			continue;
-		}
-		lst_snap_ptr = lst_snap_ptr->next;
-		list_del(&log_snap->lst);
-		free(log_snap);
-	}
-
-	printf("\n");
-
-	printf("Average time (us) for chmod operations:\n");
-	if (unaffected_total > 0) {
-		unaffected_avg = ((double) unaffected_sum / unaffected_total);
-	}
-	if (affected_create_total > 0) {
-		affected_create_avg =
-				((double) affected_create_sum / affected_create_total);
-	}
-	if (affected_wait_total > 0) {
-		affected_wait_avg =
-				((double) affected_wait_sum / affected_wait_total);
-	}
-	if (affected_delete_total > 0) {
-		affected_delete_avg =
-				((double) affected_delete_sum / affected_delete_total);
-	}
-
-	printf(	"unaffected chmods avg (us): %f\n"
-			"affected by create (us):    %f\n"
-			"affected by wait (us):      %f\n"
-			"affected by delete (us):    %f\n",
-			unaffected_avg, affected_create_avg,
-			affected_wait_avg, affected_delete_avg);
-#endif
-#if 0
-	printf(	"unaffected chmods avg (us): %llu, %llu\n"
-			"affected by create (us):    %llu, %llu\n"
-			"affected by wait (us):      %llu, %llu\n"
-			"affected by delete (us):    %llu, %llu\n",
-			unaffected_sum, unaffected_total,
-			affected_create_sum, affected_create_total,
-			affected_wait_sum, affected_wait_total,
-			affected_delete_sum, affected_delete_total);
-#endif
 }
 
 void sighandler(int sig)

@@ -70,71 +70,7 @@ static void __log_chmod(struct tests_ctl * ctl, int tid,
 	if (log->min > latency)
 		log->min = latency;
 	log->total_latency += latency;
-
-#if 0
-	state = __sync_add_and_fetch(&ctl->current_state, 0);
-
-	results = &ctl->log_chmod[tid].results[state];
-
-	latency = (uint32_t) (tv2ts(end) - tv2ts(start));
-
-	if (latency > 1000000) {
-		printf("tid: %d, start: %llu, end: %llu\n",
-				tid, start->tv_sec, end->tv_sec);
-	}
-
-	if (results->latency_max < latency)
-		results->latency_max = latency;
-
-	if (results->latency_min > latency)
-		results->latency_min = latency;
-
-	results->latency_sum += latency;
-	results->latency_total ++;
-#endif
-
-#if 0
-	log = (struct tests_log_chmod *) malloc(sizeof(*log));
-	if (!log)
-		return;
-
-	log->start = (start->tv_sec*1000000) + (start->tv_usec);
-	log->end = (end->tv_sec*1000000) + (end->tv_usec);
-
-	ctl->chmods_performed[tid] ++;
-
-	list_add_tail(&log->lst, ctl->log_chmod[tid]);
-#endif
 }
-
-#if 0
-static void __log_snapshot(struct tests_ctl * ctl,
-		struct timeval * ts, uint8_t op, uint64_t transid)
-{
-	struct tests_log_snapshot * log;
-
-	if (!ctl || !ts)
-		return;
-
-	log = (struct tests_log_snapshot *) malloc(sizeof(*log));
-	if (!log)
-		return;
-
-	memcpy(&log->timestamp, ts, sizeof(*ts));
-	log->op = op;
-	log->transid = transid;
-
-	list_add_tail(&log->lst, &ctl->log_snapshot);
-}
-
-static void __log_snapshot_now(struct tests_ctl * ctl,
-		uint8_t op, uint64_t transid)
-{
-	struct timeval tv;
-	gettimeofday(&tv, NULL);
-	__log_snapshot(ctl, &tv, op, transid);
-}
-#endif
 
 static struct tests_log_snapshot * __log_snapshot_start(void)
 {
@@ -208,7 +144,6 @@ static void * tests_run_chmod(void * args)
 		state_end = __sync_add_and_fetch(&ctl->current_state, 0);
 		version_end = __sync_add_and_fetch(&ctl->current_version, 0);
 
-//		if ((version_end > version_start) && (state_end == TESTS_STATE_NONE)) {
 		if (version_end > version_start) {
 			printf("chmod > start state: %s (%d), end state: %s (%d)\n",
 					TESTS_STATE_NAME[state_start], version_start,
@@ -295,7 +230,6 @@ static void * tests_run_snapshot(void * args)
 		perror("waiting for snapshot");
 		goto err_close;
 	}
-//	ctl->keep_running = 0;
 
 	gettimeofday(&snap_log->wait_end, NULL);
 	__snapshot_set_state(ctl, TESTS_STATE_WAIT_END);
@@ -378,7 +312,6 @@ int tests_run(struct tests_ctl * ctl)
 	do {
 		__snapshot_set_state(ctl, TESTS_STATE_NONE);
 		if (ctl->options.snap_opts.delay) {
-	//		printf("Delaying snapshot by %d secs\n", ctl->options.snap_opts.delay);
 			sleep(ctl->options.snap_opts.delay);
 		}
 
