@@ -328,10 +328,6 @@ int tests_run(struct tests_ctl * ctl)
 			break;
 		}
 
-		if (ctl->options.runtime > 0) {
-			ctl->keep_running =
-					((time(NULL) - start_time) < ctl->options.runtime);
-		}
 	} while(ctl->keep_running);
 
 	printf("Snapshot'ing finished.\n");

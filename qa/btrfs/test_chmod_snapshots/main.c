@@ -83,6 +83,9 @@ int do_getopt(int * argc, char ** argv, struct tests_options * options)
 		case 't':
 			options->chmod_opts.num_threads = strtol(optarg, NULL, 10);
 			break;
+		case 'c':
+			options->chmod_only = 1;
+			break;
 		case 'p':
 			options->plot = 1;
 			break;
