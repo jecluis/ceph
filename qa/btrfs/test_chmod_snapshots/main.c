@@ -21,7 +21,7 @@
  * ought to be enough for anyone */
 #define RND_NAME_LEN 30
 
-static char * __generate_filename(void);
+//static char * __generate_filename(void);
 
 static struct option longopts[] = {
 		{ "sleep", required_argument, NULL, 's' },
@@ -120,9 +120,11 @@ int do_world_init(struct tests_ctl * ctl)
 	if (!ctl)
 		return -EINVAL;
 
-	str = __generate_filename();
-	if (IS_ERR(str))
-		return PTR_ERR(str);
+	str = tests_generate_filename();
+//	if (IS_ERR(str))
+//		return PTR_ERR(str);
+	if (!str)
+		return -ENOMEM;
 
 	ctl->options.chmod_opts.filename = str;
 
@@ -323,26 +325,3 @@ err_cleanup:
 	return 1;
 }
 
-static char * __generate_filename(void)
-{
-	static const char alphanum[] =
-			"0123456789"
-			"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-			"abcdefghijklmnopqrstuvwxyz";
-
-	char * str;
-	int i;
-
-	srand(time(NULL));
-
-	str = (char *) malloc(RND_NAME_LEN + 1);
-	if (!str)
-		return ERR_PTR(-ENOMEM);
-
-	for (i = 0; i < RND_NAME_LEN; i ++) {
-		str[i] = alphanum[rand() % (sizeof(alphanum) - 1)];
-	}
-	str[RND_NAME_LEN] = '\0';
-
-	return str;
-}

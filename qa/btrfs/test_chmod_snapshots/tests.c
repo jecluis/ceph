@@ -105,6 +105,7 @@ static void * tests_run_chmod(void * args)
 	int i;
 	uint8_t state_start, state_end;
 	uint32_t version_start, version_end;
+	char * filename;
 
 	if (!args)
 		goto out;
@@ -116,6 +117,10 @@ static void * tests_run_chmod(void * args)
 
 	ctl = (struct tests_ctl *) thread_args->args;
 
+	filename = tests_generate_filename();
+	if (!filename)
+		goto out;
+
 	i = 0;
 	do {
 		err = gettimeofday(&tv_start, NULL);
@@ -126,8 +131,8 @@ static void * tests_run_chmod(void * args)
 		state_start = __sync_add_and_fetch(&ctl->current_state, 0);
 		version_start = __sync_add_and_fetch(&ctl->current_version, 0);
 
-		err = chmod(ctl->options.chmod_opts.filename,
-				modes[(i ++)%TOTAL_MODES]);
+//		err = chmod(ctl->options.chmod_opts.filename,
+		err = chmod(filename, modes[(i ++)%TOTAL_MODES]);
 		if (err < 0) {
 		    fprintf(stderr, "chmod'ing %s @ %s: %s\n", 
 			    ctl->options.chmod_opts.filename,
@@ -157,6 +162,7 @@ static void * tests_run_chmod(void * args)
 
 	printf("Chmod'ing finished (with %d ops).\n", i);
 
+	free(filename);
 
 out:
 	pthread_exit(NULL);
@@ -342,3 +348,28 @@ int tests_run(struct tests_ctl * ctl)
 
 	return 0;
 }
+
+char * tests_generate_filename(void)
+{
+	static const char alphanum[] =
+			"0123456789"
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+			"abcdefghijklmnopqrstuvwxyz";
+
+	char * str;
+	int i;
+
+	srand(time(NULL));
+
+	str = (char *) malloc(RND_NAME_LEN + 1);
+	if (!str)
+		return NULL;
+
+	for (i = 0; i < RND_NAME_LEN; i ++) {
+		str[i] = alphanum[rand() % (sizeof(alphanum) - 1)];
+	}
+	str[RND_NAME_LEN] = '\0';
+
+	return str;
+}
+

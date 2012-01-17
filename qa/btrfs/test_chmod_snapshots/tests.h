@@ -76,5 +76,6 @@ struct tests_log_snapshot {
 struct tests_ctl;
 
 int tests_run(struct tests_ctl * ctl);
+char * tests_generate_filename(void);
 
 #endif /* CEPH_BTRFS_TESTS_H_ */
