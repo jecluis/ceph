@@ -27,7 +27,7 @@ void tests_options_init(struct tests_options * options)
 
 	options->init = 0;
 	options->plot = 0;
-	options->runtime = 0;
+	options->chmod_only = 0;
 	options->subvolume_path = NULL;
 
 	options->chmod_opts.filename = NULL;

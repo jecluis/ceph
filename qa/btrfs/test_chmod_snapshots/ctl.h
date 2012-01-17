@@ -26,7 +26,7 @@ struct tests_options {
 	char * 					subvolume_path;
 	uint8_t 				init;
 	uint8_t					plot;
-	uint32_t 				runtime;
+	uint8_t 				chmod_only;
 
 	struct tests_chmod_opts	chmod_opts;
 	struct tests_snap_opts 	snap_opts;

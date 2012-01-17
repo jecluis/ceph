@@ -27,6 +27,7 @@ static struct option longopts[] = {
 		{ "sleep", required_argument, NULL, 's' },
 		{ "delay", required_argument, NULL, 'd' },
 		{ "threads", required_argument, NULL, 't' },
+		{ "chmod-only", no_argument, NULL, 'c' },
 		{ "init", no_argument, NULL, 'i' },
 		{ "plot", no_argument, NULL, 'p' },
 		{ "help", no_argument, NULL, 'h' },
@@ -67,7 +68,7 @@ int do_getopt(int * argc, char ** argv, struct tests_options * options)
 
 	tests_options_init(options);
 
-	while (((ch = getopt_long(*argc, argv, "s:d:t:iph", longopts, NULL)) != -1)
+	while (((ch = getopt_long(*argc, argv, "s:d:t:ciph", longopts, NULL)) != -1)
 			&& !cleanup) {
 		switch (ch) {
 		case 'i':

@@ -310,10 +310,15 @@ int tests_run(struct tests_ctl * ctl)
 
 	start_time = time(NULL);
 	do {
+
 		__snapshot_set_state(ctl, TESTS_STATE_NONE);
+
 		if (ctl->options.snap_opts.delay) {
 			sleep(ctl->options.snap_opts.delay);
 		}
+
+		if (ctl->options.chmod_only)
+			continue;
 
 		err_ptr = tests_run_snapshot(ctl);
 		if (err_ptr && IS_ERR(err_ptr)) {
