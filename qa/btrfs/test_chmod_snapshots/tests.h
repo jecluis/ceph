@@ -4,6 +4,11 @@
 #include <sys/time.h>
 #include "list.h"
 
+/* 30 chars for a randomly generated file name
+ * ought to be enough for anyone */
+#define RND_NAME_LEN 30
+
+
 #define TESTS_STATE_NONE			(0x00)
 #define TESTS_STATE_NEXT_NONE		(0x01)
 #define TESTS_STATE_CREATE	 		(0x02)

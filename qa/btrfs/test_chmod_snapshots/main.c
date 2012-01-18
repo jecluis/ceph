@@ -17,9 +17,6 @@
 #include "tests.h"
 #include "list.h"
 
-/* 30 chars for a randomly generated file name
- * ought to be enough for anyone */
-#define RND_NAME_LEN 30
 
 //static char * __generate_filename(void);
 
