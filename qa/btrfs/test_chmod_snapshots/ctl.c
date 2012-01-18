@@ -29,12 +29,13 @@ void tests_options_init(struct tests_options * options)
 	options->plot = 0;
 	options->chmod_only = 0;
 	options->subvolume_path = NULL;
+	options->runtime = TESTS_DEFAULT_RUNTIME;
 
 	options->chmod_opts.filename = NULL;
 	options->chmod_opts.num_threads = 0;
 
-	options->snap_opts.delay = TESTS_SNAPSHOT_DEFAULT_DELAY;
-	options->snap_opts.sleep = TESTS_SNAPSHOT_DEFAULT_SLEEP;
+	options->snap_opts.delay = TESTS_DEFAULT_SNAPSHOT_DELAY;
+	options->snap_opts.sleep = TESTS_DEFAULT_SNAPSHOT_SLEEP;
 }
 
 void tests_ctl_cleanup_paths(struct tests_ctl * ctl)

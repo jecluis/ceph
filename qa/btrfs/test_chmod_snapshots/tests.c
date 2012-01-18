@@ -121,6 +121,13 @@ static void * tests_run_chmod(void * args)
 	if (!filename)
 		goto out;
 
+	err = creat(filename, S_IRWXU|S_IRWXG|S_IRWXO);
+	if (err < 0) {
+		free(filename);
+		perror("creating file");
+		goto out;
+	}
+
 	i = 0;
 	do {
 		err = gettimeofday(&tv_start, NULL);
@@ -276,7 +283,7 @@ int tests_run(struct tests_ctl * ctl)
 {
 	int err;
 	void * err_ptr;
-	time_t start_time;
+	time_t start_time, curr_time;
 	pthread_t * tid_chmod;
 	struct tests_thread_args ** args;
 	int i;
@@ -333,6 +340,10 @@ int tests_run(struct tests_ctl * ctl)
 			ctl->keep_running = 0;
 			break;
 		}
+
+		curr_time = time(NULL);
+		if ((curr_time - start_time) >= ctl->options.runtime)
+			ctl->keep_running = 0;
 
 	} while(ctl->keep_running);
 

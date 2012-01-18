@@ -8,8 +8,9 @@
 
 /* default values (in seconds), just in case.
  * should be changed as appropriate. */
-#define TESTS_SNAPSHOT_DEFAULT_DELAY	10
-#define TESTS_SNAPSHOT_DEFAULT_SLEEP	10
+#define TESTS_DEFAULT_SNAPSHOT_DELAY	10
+#define TESTS_DEFAULT_SNAPSHOT_SLEEP	10
+#define TESTS_DEFAULT_RUNTIME			60 /* in seconds */
 
 struct tests_chmod_opts {
 	char * filename;
@@ -27,6 +28,7 @@ struct tests_options {
 	uint8_t 				init;
 	uint8_t					plot;
 	uint8_t 				chmod_only;
+	uint32_t				runtime;
 
 	struct tests_chmod_opts	chmod_opts;
 	struct tests_snap_opts 	snap_opts;

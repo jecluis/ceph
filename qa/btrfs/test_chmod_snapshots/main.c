@@ -24,6 +24,7 @@ static struct option longopts[] = {
 		{ "sleep", required_argument, NULL, 's' },
 		{ "delay", required_argument, NULL, 'd' },
 		{ "threads", required_argument, NULL, 't' },
+		{ "runtime", required_argument, NULL, 'r' },
 		{ "chmod-only", no_argument, NULL, 'c' },
 		{ "init", no_argument, NULL, 'i' },
 		{ "plot", no_argument, NULL, 'p' },
@@ -42,11 +43,19 @@ void print_usage(const char * name)
 		"Options:\n"
 		"        -i, --init               Randomly initialize the FS\n"
 		"        -s, --sleep=VAL          Sleep (in seconds) during snapshots\n"
+		"                                 (default: %d)\n"
 		"        -d, --delay=VAL          Delay (in seconds) between snapshots\n"
+		"                                 (default: %d)\n"
 		"        -t, --threads=VAL        Number of threads for chmod test\n"
+		"        -r, --runtime=SECS       Run for SECS seconds\n"
+		"                                 (default: %d)\n"
+		"        -c, --chmod-only         Only run the chmod test\n"
 		"        -p, --plot               Output GnuPlot data instead of usual dump\n"
 		"        -h, --help               This information\n"
-		"\n", name
+		"\n", name,
+		TESTS_DEFAULT_SNAPSHOT_SLEEP,
+		TESTS_DEFAULT_SNAPSHOT_DELAY,
+		TESTS_DEFAULT_RUNTIME
 	);
 }
 
@@ -65,7 +74,7 @@ int do_getopt(int * argc, char ** argv, struct tests_options * options)
 
 	tests_options_init(options);
 
-	while (((ch = getopt_long(*argc, argv, "s:d:t:ciph", longopts, NULL)) != -1)
+	while (((ch = getopt_long(*argc, argv, "s:d:t:r:ciph", longopts, NULL)) != -1)
 			&& !cleanup) {
 		switch (ch) {
 		case 'i':
@@ -79,6 +88,9 @@ int do_getopt(int * argc, char ** argv, struct tests_options * options)
 			break;
 		case 't':
 			options->chmod_opts.num_threads = strtol(optarg, NULL, 10);
+			break;
+		case 'r':
+			options->runtime = strtol(optarg, NULL, 10);
 			break;
 		case 'c':
 			options->chmod_only = 1;
@@ -295,12 +307,13 @@ int main(int argc, char ** argv)
 		goto err_cleanup;
 	}
 
+#if 0
 	err = do_world_init(&ctl);
 	if (err < 0) {
 		fprintf(stderr, "initiating world: %s\n", strerror(err));
 		goto err_cleanup;
 	}
-
+#endif
 	signal(SIGINT, sighandler);
 
 	gettimeofday(&tv_start, NULL);
