@@ -130,6 +130,8 @@ static void * tests_run_chmod(void * args)
 		goto out;
 	}
 
+	printf("chmod #%d created '%s'\n", thread_args->tid, filename);
+
 	i = 0;
 	do {
 		err = gettimeofday(&tv_start, NULL);
@@ -158,6 +160,15 @@ static void * tests_run_chmod(void * args)
 		state_end = __sync_add_and_fetch(&ctl->current_state, 0);
 		version_end = __sync_add_and_fetch(&ctl->current_version, 0);
 
+		if (tv2ts(&tv_end)-tv2ts(&tv_start) > 200000) {
+			printf("chmod > latency: %lu, %s-%s, %d-%d\n",
+					tv2ts(&tv_end)-tv2ts(&tv_start),
+					TESTS_STATE_NAME[state_start],
+					TESTS_STATE_NAME[state_end],
+					version_start, version_end);
+		}
+
+#if 0
 		if (version_end > version_start) {
 			printf("chmod > start state: %s (%d), end state: %s (%d) > %d\n",
 					TESTS_STATE_NAME[state_start], version_start,
@@ -165,6 +176,7 @@ static void * tests_run_chmod(void * args)
 					(tv2ts(&tv_end)-tv2ts(&tv_start)));
 			state_end = state_end + 1;
 		}
+#endif
 
 		__log_chmod(ctl, thread_args->tid, &tv_start, &tv_end,
 				state_start, state_end);
@@ -240,6 +252,9 @@ static void * tests_run_snapshot(void * args)
 
 	gettimeofday(&snap_log->wait_begin, NULL);
 	__snapshot_set_state(ctl, TESTS_STATE_WAIT_BEGIN);
+
+	printf("snap create latency: %d\n", 
+			(tv2ts(&snap_log->wait_begin)-tv2ts(&snap_log->create)));
 
 	err = ioctl(dstfd, BTRFS_IOC_WAIT_SYNC, &async_vol_args.transid);
 	if (err < 0) {
