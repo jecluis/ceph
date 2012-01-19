@@ -24,12 +24,14 @@
 
 #define TESTS_NUM_STATES 			(0x0B+1)
 
-#define TESTS_NUM_BUCKETS			17
+#define TESTS_NUM_BUCKETS			10
 
 static const int TESTS_BUCKETS_LIMITS[TESTS_NUM_BUCKETS] = {
-		1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
 		50, 100, 200,
 		1000,
+		5000,
+		200000,
+		500000,
 		1000000,
 		2000000,
 		0

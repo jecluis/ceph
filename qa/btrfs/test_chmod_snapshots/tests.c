@@ -157,9 +157,10 @@ static void * tests_run_chmod(void * args)
 		version_end = __sync_add_and_fetch(&ctl->current_version, 0);
 
 		if (version_end > version_start) {
-			printf("chmod > start state: %s (%d), end state: %s (%d)\n",
+			printf("chmod > start state: %s (%d), end state: %s (%d) > %d\n",
 					TESTS_STATE_NAME[state_start], version_start,
-					TESTS_STATE_NAME[state_end], version_end);
+					TESTS_STATE_NAME[state_end], version_end,
+					(tv2ts(&tv_end)-tv2ts(&tv_start)));
 			state_end = state_end + 1;
 		}
 
