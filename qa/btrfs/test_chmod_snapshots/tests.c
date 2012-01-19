@@ -123,8 +123,10 @@ static void * tests_run_chmod(void * args)
 
 	err = creat(filename, S_IRWXU|S_IRWXG|S_IRWXO);
 	if (err < 0) {
+		fprintf(stderr, "creating a file (%s @ %s): %s\n",
+				filename, get_current_dir_name(), strerror(errno));
 		free(filename);
-		perror("creating file");
+//		perror("creating file");
 		goto out;
 	}
 
@@ -305,6 +307,8 @@ int tests_run(struct tests_ctl * ctl)
 		return -ENOMEM;
 	}
 
+	srand(time(NULL));
+
 	for (i = 0; i < ctl->chmod_threads; i ++) {
 		args[i] = (struct tests_thread_args *) malloc(sizeof(*args[i]));
 		if (!args[i]) {
@@ -371,7 +375,6 @@ char * tests_generate_filename(void)
 	char * str;
 	int i;
 
-	srand(time(NULL));
 
 	str = (char *) malloc(RND_NAME_LEN + 1);
 	if (!str)
