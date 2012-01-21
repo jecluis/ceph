@@ -25,7 +25,7 @@ static struct option longopts[] = {
 		{ "delay", required_argument, NULL, 'd' },
 		{ "threads", required_argument, NULL, 't' },
 		{ "runtime", required_argument, NULL, 'r' },
-		{ "chmod-only", no_argument, NULL, 'c' },
+		{ "only", required_argument, NULL, 'o' },
 		{ "init", no_argument, NULL, 'i' },
 		{ "plot", no_argument, NULL, 'p' },
 		{ "help", no_argument, NULL, 'h' },
@@ -49,7 +49,7 @@ void print_usage(const char * name)
 		"        -t, --threads=VAL        Number of threads for chmod test\n"
 		"        -r, --runtime=SECS       Run for SECS seconds\n"
 		"                                 (default: %d)\n"
-		"        -c, --chmod-only         Only run the chmod test\n"
+		"        -o, --only=[c|s]         Only run the chmod or snapshot test\n"
 		"        -p, --plot               Output GnuPlot data instead of usual dump\n"
 		"        -h, --help               This information\n"
 		"\n", name,
@@ -74,7 +74,7 @@ int do_getopt(int * argc, char ** argv, struct tests_options * options)
 
 	tests_options_init(options);
 
-	while (((ch = getopt_long(*argc, argv, "s:d:t:r:ciph", longopts, NULL)) != -1)
+	while (((ch = getopt_long(*argc, argv, "s:d:t:r:o:iph", longopts, NULL)) != -1)
 			&& !cleanup) {
 		switch (ch) {
 		case 'i':
@@ -92,8 +92,14 @@ int do_getopt(int * argc, char ** argv, struct tests_options * options)
 		case 'r':
 			options->runtime = strtol(optarg, NULL, 10);
 			break;
-		case 'c':
-			options->chmod_only = 1;
+		case 'o':
+			printf("optarg = %s\n", optarg);
+			if (*optarg == 'c')
+				options->chmod_only = 1;
+			else if (*optarg == 's') {
+				options->snapshot_only = 1;
+				printf("snapshots only!\n");
+			}
 			break;
 		case 'p':
 			options->plot = 1;

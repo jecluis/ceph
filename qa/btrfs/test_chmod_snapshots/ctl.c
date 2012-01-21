@@ -28,6 +28,7 @@ void tests_options_init(struct tests_options * options)
 	options->init = 0;
 	options->plot = 0;
 	options->chmod_only = 0;
+	options->snapshot_only = 0;
 	options->subvolume_path = NULL;
 	options->runtime = TESTS_DEFAULT_RUNTIME;
 

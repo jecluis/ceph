@@ -12,6 +12,8 @@
 #include <errno.h>
 #include <libgen.h>
 #include <sys/ioctl.h>
+#include <sys/types.h>
+#include <sys/syscall.h>
 
 #if defined(__linux__) || defined(__FreeBSD__)
 #include <linux/ioctl.h>
@@ -107,6 +109,9 @@ static void * tests_run_chmod(void * args)
 	uint32_t version_start, version_end;
 	char * filename;
 
+	pid_t r_tid;
+	uint8_t do_out = 0;
+
 	if (!args)
 		goto out;
 
@@ -130,7 +135,8 @@ static void * tests_run_chmod(void * args)
 		goto out;
 	}
 
-	printf("chmod #%d created '%s'\n", thread_args->tid, filename);
+	r_tid = syscall(SYS_gettid);
+	printf("chmod #%d (%d) created '%s'\n", thread_args->tid, r_tid, filename);
 
 	i = 0;
 	do {
@@ -141,6 +147,12 @@ static void * tests_run_chmod(void * args)
 		}
 		state_start = __sync_add_and_fetch(&ctl->current_state, 0);
 		version_start = __sync_add_and_fetch(&ctl->current_version, 0);
+
+		if ((state_start == TESTS_STATE_CREATE)
+				|| (state_start == TESTS_STATE_WAIT_BEGIN)) {
+			do_out = 1;
+		} else
+			do_out = 0;
 
 //		err = chmod(ctl->options.chmod_opts.filename,
 		err = chmod(filename, modes[(i ++)%TOTAL_MODES]);
@@ -160,8 +172,10 @@ static void * tests_run_chmod(void * args)
 		state_end = __sync_add_and_fetch(&ctl->current_state, 0);
 		version_end = __sync_add_and_fetch(&ctl->current_version, 0);
 
-		if (tv2ts(&tv_end)-tv2ts(&tv_start) > 200000) {
-			printf("chmod > latency: %lu, %s-%s, %d-%d\n",
+		do_out = 0;
+		if (do_out || (tv2ts(&tv_end)-tv2ts(&tv_start) > 50000)) {
+			printf("[ %lu.%lu ] chmod %d > latency: %lu, %s-%s, %d-%d\n",
+					tv_start.tv_sec, tv_start.tv_usec, r_tid,
 					tv2ts(&tv_end)-tv2ts(&tv_start),
 					TESTS_STATE_NAME[state_start],
 					TESTS_STATE_NAME[state_end],
@@ -240,7 +254,7 @@ static void * tests_run_snapshot(void * args)
 		goto err_close;
 	}
 
-	printf("Creating snapshot\n");
+//	printf("Creating snapshot\n");
 	gettimeofday(&snap_log->create, NULL);
 	__snapshot_set_state(ctl, TESTS_STATE_CREATE);
 
@@ -253,9 +267,6 @@ static void * tests_run_snapshot(void * args)
 	gettimeofday(&snap_log->wait_begin, NULL);
 	__snapshot_set_state(ctl, TESTS_STATE_WAIT_BEGIN);
 
-	printf("snap create latency: %d\n", 
-			(tv2ts(&snap_log->wait_begin)-tv2ts(&snap_log->create)));
-
 	err = ioctl(dstfd, BTRFS_IOC_WAIT_SYNC, &async_vol_args.transid);
 	if (err < 0) {
 		perror("waiting for snapshot");
@@ -265,6 +276,12 @@ static void * tests_run_snapshot(void * args)
 	gettimeofday(&snap_log->wait_end, NULL);
 	__snapshot_set_state(ctl, TESTS_STATE_WAIT_END);
 	__sync_fetch_and_add(&ctl->current_version, 1);
+
+	printf("[ %lu.%lu ] snap > latency > create: %d, create+wait: %d\n", 
+			snap_log->create.tv_sec, snap_log->create.tv_usec,
+			(tv2ts(&snap_log->wait_begin)-tv2ts(&snap_log->create)),
+			(tv2ts(&snap_log->wait_end)-tv2ts(&snap_log->create)));
+
 	
 	sleep(ctl->options.snap_opts.sleep);
 
@@ -311,6 +328,9 @@ int tests_run(struct tests_ctl * ctl)
 		return -EINVAL;
 	}
 
+	if (ctl->options.snapshot_only)
+		goto snapshot_only;
+
 	tid_chmod = (pthread_t *) malloc(sizeof(*tid_chmod)*ctl->chmod_threads);
 	if (!tid_chmod)
 		return -ENOMEM;
@@ -341,6 +361,8 @@ int tests_run(struct tests_ctl * ctl)
 		}
 	}
 
+snapshot_only:
+	
 	start_time = time(NULL);
 	do {
 

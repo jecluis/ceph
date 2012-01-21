@@ -28,6 +28,7 @@ struct tests_options {
 	uint8_t 				init;
 	uint8_t					plot;
 	uint8_t 				chmod_only;
+	uint8_t					snapshot_only;
 	uint32_t				runtime;
 
 	struct tests_chmod_opts	chmod_opts;
