@@ -26,6 +26,7 @@ static struct option longopts[] = {
 		{ "threads", required_argument, NULL, 't' },
 		{ "runtime", required_argument, NULL, 'r' },
 		{ "only", required_argument, NULL, 'o' },
+		{ "model", required_argument, NULL, 'm' },
 		{ "init", no_argument, NULL, 'i' },
 		{ "plot", no_argument, NULL, 'p' },
 		{ "help", no_argument, NULL, 'h' },
@@ -50,8 +51,13 @@ void print_usage(const char * name)
 		"        -r, --runtime=SECS       Run for SECS seconds\n"
 		"                                 (default: %d)\n"
 		"        -o, --only=[c|s]         Only run the chmod or snapshot test\n"
+		"        -m, --model=MODEL        Model of test to run\n"
 		"        -p, --plot               Output GnuPlot data instead of usual dump\n"
 		"        -h, --help               This information\n"
+		"Models:\n"
+		"        cas                      Chmods w/ Concurrent Async Snapshots\n"
+		"        cs                       Chmods w/ Concurrent FS Syncs\n"
+		"        fcas                     File Creation w/ Concurrent Async Snapshots\n"
 		"\n", name,
 		TESTS_DEFAULT_SNAPSHOT_SLEEP,
 		TESTS_DEFAULT_SNAPSHOT_DELAY,
@@ -74,7 +80,7 @@ int do_getopt(int * argc, char ** argv, struct tests_options * options)
 
 	tests_options_init(options);
 
-	while (((ch = getopt_long(*argc, argv, "s:d:t:r:o:iph", longopts, NULL)) != -1)
+	while (((ch = getopt_long(*argc, argv, "s:d:t:r:o:m:iph", longopts, NULL)) != -1)
 			&& !cleanup) {
 		switch (ch) {
 		case 'i':
@@ -94,11 +100,22 @@ int do_getopt(int * argc, char ** argv, struct tests_options * options)
 			break;
 		case 'o':
 			printf("optarg = %s\n", optarg);
-			if (*optarg == 'c')
-				options->chmod_only = 1;
+			if (*optarg == 'c') {
+				options->run_tests = TESTS_RUN_CHMOD;
+			}
 			else if (*optarg == 's') {
-				options->snapshot_only = 1;
+				options->run_tests = TESTS_RUN_SNAPS;
 				printf("snapshots only!\n");
+			}
+			break;
+		case 'm':
+			printf("model = %s\n", optarg);
+			if (!strncmp(optarg, "cas", 3)) {
+				options->run_tests = TESTS_RUN_MODEL_CAS;
+			} else if (!strncmp(optarg, "cs", 2)) {
+				options->run_tests = TESTS_RUN_MODEL_CS;
+			} else if (!strncmp(optarg, "fcas", 4)) {
+				options->run_tests = TESTS_RUN_MODEL_FCAS;
 			}
 			break;
 		case 'p':
@@ -259,6 +276,7 @@ void do_print_results(struct tests_ctl * ctl)
 	}
 
 	printf("\ntotal chmods = %lu\n", total);
+	printf("Test started @ %lu.%lu\n", ctl->start.tv_sec, ctl->start.tv_usec);
 
 	for (lst_snap_ptr = ctl->log_snapshot.next; !list_empty(lst_snap_ptr); ) {
 

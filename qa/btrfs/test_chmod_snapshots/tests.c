@@ -14,6 +14,7 @@
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/syscall.h>
+#include <unistd.h>
 
 #if defined(__linux__) || defined(__FreeBSD__)
 #include <linux/ioctl.h>
@@ -131,7 +132,6 @@ static void * tests_run_chmod(void * args)
 		fprintf(stderr, "creating a file (%s @ %s): %s\n",
 				filename, get_current_dir_name(), strerror(errno));
 		free(filename);
-//		perror("creating file");
 		goto out;
 	}
 
@@ -154,7 +154,6 @@ static void * tests_run_chmod(void * args)
 		} else
 			do_out = 0;
 
-//		err = chmod(ctl->options.chmod_opts.filename,
 		err = chmod(filename, modes[(i ++)%TOTAL_MODES]);
 		if (err < 0) {
 		    fprintf(stderr, "chmod'ing %s @ %s: %s\n", 
@@ -172,25 +171,14 @@ static void * tests_run_chmod(void * args)
 		state_end = __sync_add_and_fetch(&ctl->current_state, 0);
 		version_end = __sync_add_and_fetch(&ctl->current_version, 0);
 
-		do_out = 0;
-		if (do_out || (tv2ts(&tv_end)-tv2ts(&tv_start) > 50000)) {
-			printf("[ %lu.%lu ] chmod %d > latency: %lu, %s-%s, %d-%d\n",
-					tv_start.tv_sec, tv_start.tv_usec, r_tid,
-					tv2ts(&tv_end)-tv2ts(&tv_start),
-					TESTS_STATE_NAME[state_start],
-					TESTS_STATE_NAME[state_end],
-					version_start, version_end);
-		}
+		printf("chmod %d > %02.5f, %lu > %s-%s, %d-%d\n",
+				r_tid,
+				tvdiff2secs(&tv_start, &ctl->start),
+				tv2ts(&tv_end)-tv2ts(&tv_start),
+				TESTS_STATE_NAME[state_start],
+				TESTS_STATE_NAME[state_end],
+				version_start, version_end);
 
-#if 0
-		if (version_end > version_start) {
-			printf("chmod > start state: %s (%d), end state: %s (%d) > %d\n",
-					TESTS_STATE_NAME[state_start], version_start,
-					TESTS_STATE_NAME[state_end], version_end,
-					(tv2ts(&tv_end)-tv2ts(&tv_start)));
-			state_end = state_end + 1;
-		}
-#endif
 
 		__log_chmod(ctl, thread_args->tid, &tv_start, &tv_end,
 				state_start, state_end);
@@ -221,7 +209,7 @@ static void * tests_run_snapshot(void * args)
 
 	ctl = (struct tests_ctl *) args;
 
-	if (!ctl || !ctl->subvolume_path)
+	if (!ctl || !ctl->subvolume_path || !ctl->destination_path)
 		return ERR_PTR(-EINVAL);
 
 	dstdir = ctl->destination_path;
@@ -232,11 +220,13 @@ static void * tests_run_snapshot(void * args)
 		return ERR_PTR(-errno);
 	}
 
-	subvol_fd = open(dstdir, O_RDONLY);
+	subvol_fd = open(ctl->subvolume_path, O_RDONLY);
 	if (subvol_fd < 0) {
 		perror("opening subvolume path");
 		goto err_close_dst;
 	}
+
+	//printf("dstdir: %s, subvol path: %s\n", dstdir, ctl->subvolume_path);
 
 	async_vol_args.fd = subvol_fd;
 	async_vol_args.flags = BTRFS_SUBVOL_CREATE_ASYNC;
@@ -277,11 +267,18 @@ static void * tests_run_snapshot(void * args)
 	__snapshot_set_state(ctl, TESTS_STATE_WAIT_END);
 	__sync_fetch_and_add(&ctl->current_version, 1);
 
+#if 0
 	printf("[ %lu.%lu ] snap > latency > create: %d, create+wait: %d\n", 
 			snap_log->create.tv_sec, snap_log->create.tv_usec,
 			(tv2ts(&snap_log->wait_begin)-tv2ts(&snap_log->create)),
 			(tv2ts(&snap_log->wait_end)-tv2ts(&snap_log->create)));
+#endif
 
+	printf("snap > %02.5f, %lu, %lu\n",
+//			(tv2ts(&snap_log->create)-tv2ts(&ctl->start)),
+			tvdiff2secs(&snap_log->create, &ctl->start),
+			(tv2ts(&snap_log->wait_begin)-tv2ts(&snap_log->create)),
+			(tv2ts(&snap_log->wait_end)-tv2ts(&snap_log->create)));
 	
 	sleep(ctl->options.snap_opts.sleep);
 
@@ -301,6 +298,8 @@ static void * tests_run_snapshot(void * args)
 	__log_snapshot_finish(ctl, snap_log);
 	__snapshot_set_state(ctl, TESTS_STATE_POST_DESTROY);
 
+	ctl->total_snaps ++;
+
 err_close:
 	close(subvol_fd);
 err_close_dst:
@@ -311,6 +310,122 @@ err_close_dst:
 	}
 
 	return ret;
+}
+
+void * tests_run_sync(void * args) 
+{
+	struct tests_ctl * ctl;
+	int fd;
+	int err;
+	struct timeval tv_start, tv_end;
+
+	if (!args)
+		return ERR_PTR(-EINVAL);
+
+	ctl = (struct tests_ctl *) args;
+
+	fd = open(ctl->subvolume_path, O_RDONLY);
+	if (fd < 0) {
+		perror("tests_run_sync: opening subvolume path");
+		return ERR_PTR(-errno);
+	}
+
+	gettimeofday(&tv_start, NULL);
+
+	__snapshot_set_state(ctl, TESTS_STATE_SYNC_START);
+
+	err = ioctl(fd, BTRFS_IOC_SYNC);
+	if (err < 0) {
+		perror("tests_run_sync: sync'ing the file system");
+		close(fd);
+		return ERR_PTR(-errno);
+	}
+	gettimeofday(&tv_end, NULL);
+	__snapshot_set_state(ctl, TESTS_STATE_SYNC_END);
+
+	printf("sync> %02.5f, %lu\n", 
+			tvdiff2secs(&tv_start, &ctl->start),
+//			(tv2ts(&tv_start)-tv2ts(&ctl->start)), 
+			(tv2ts(&tv_end)-tv2ts(&tv_start)));
+
+	ctl->total_syncs ++;
+	return NULL;
+}
+
+void * tests_run_file_creation(void * args)
+{
+	struct tests_thread_args * thread_args;
+	struct tests_ctl * ctl;
+	int cnt;
+	const int file_count = 100;
+	double max_ts = 0.0;
+	uint32_t max_latency = 0, tmp;
+	uint8_t max_state_start, max_state_end;
+	struct timeval tv_start, tv_end;
+	uint8_t state_start, state_end;
+	char * filename;
+	pid_t r_tid;
+	int err;
+
+	if (!args)
+		goto out;
+
+	thread_args = (struct tests_thread_args *) args;
+
+	if (!thread_args->args)
+		goto out;
+
+	ctl = (struct tests_ctl *) thread_args->args;
+
+	r_tid = syscall(SYS_gettid);
+
+	cnt = 0;
+	do {
+		filename = tests_generate_filename();
+		if (!filename)
+			goto out;
+
+		gettimeofday(&tv_start, NULL);
+		state_start = __sync_add_and_fetch(&ctl->current_state, 0);
+
+		err = creat(filename, S_IRWXU|S_IRWXG|S_IRWXO);
+		if (err < 0) {
+			fprintf(stderr, "creating a file (%s @ %s): %s\n",
+					filename, get_current_dir_name(), strerror(errno));
+			free(filename);
+			goto out;
+		}
+		gettimeofday(&tv_end, NULL);
+		state_end = __sync_add_and_fetch(&ctl->current_state, 0);
+		cnt ++;
+
+		__log_chmod(ctl, thread_args->tid, &tv_start, &tv_end,
+				state_start, state_end);
+
+		close(err);
+
+		tmp = (tv2ts(&tv_end)-tv2ts(&tv_start));
+		if (tmp > max_latency) {
+			max_latency = tmp;
+			max_ts = tvdiff2secs(&tv_start, &ctl->start);
+			max_state_start = state_start;
+			max_state_end = state_end;
+		}
+
+		if (cnt == file_count) {
+			printf("creat %d > %02.5f, %lu (%s-%s)\n", 
+					r_tid, max_ts, max_latency,
+					TESTS_STATE_NAME[max_state_start],
+					TESTS_STATE_NAME[max_state_end]);
+			max_ts = max_latency = 0;
+			cnt = 0;
+			usleep(25000);
+		}
+
+	} while (ctl->keep_running);
+
+out:
+	pthread_exit(NULL);
 }
 
 
@@ -328,9 +443,6 @@ int tests_run(struct tests_ctl * ctl)
 		return -EINVAL;
 	}
 
-	if (ctl->options.snapshot_only)
-		goto snapshot_only;
-
 	tid_chmod = (pthread_t *) malloc(sizeof(*tid_chmod)*ctl->chmod_threads);
 	if (!tid_chmod)
 		return -ENOMEM;
@@ -342,8 +454,6 @@ int tests_run(struct tests_ctl * ctl)
 		return -ENOMEM;
 	}
 
-	srand(time(NULL));
-
 	for (i = 0; i < ctl->chmod_threads; i ++) {
 		args[i] = (struct tests_thread_args *) malloc(sizeof(*args[i]));
 		if (!args[i]) {
@@ -351,8 +461,19 @@ int tests_run(struct tests_ctl * ctl)
 		}
 		args[i]->args = (void *) ctl;
 		args[i]->tid = i;
+	}
 
 
+	srand(time(NULL));
+
+	gettimeofday(&ctl->start, NULL);
+
+	if (!(ctl->options.run_tests & TESTS_RUN_CHMOD))
+		goto no_chmod;
+
+
+	for (i = 0; i < ctl->chmod_threads; i ++) {
+	
 		err = pthread_create(&tid_chmod[i], NULL,
 				tests_run_chmod, (void *) args[i]);
 		if (err) {
@@ -361,8 +482,25 @@ int tests_run(struct tests_ctl * ctl)
 		}
 	}
 
-snapshot_only:
+no_chmod:
+
+	if (!(ctl->options.run_tests & TESTS_RUN_CREATES))
+		goto no_creates;
+
 	
+	for (i = 0; i < ctl->chmod_threads; i ++) {
+
+		err = pthread_create(&tid_chmod[i], NULL,
+				tests_run_file_creation, (void *) args[i]);
+		if (err) {
+			fprintf(stderr, "Error creating thread %i: %s\n", i, strerror(err));
+			return (-err);
+		}
+	}
+
+
+no_creates:
+
 	start_time = time(NULL);
 	do {
 
@@ -372,15 +510,25 @@ snapshot_only:
 			sleep(ctl->options.snap_opts.delay);
 		}
 
-		if (ctl->options.chmod_only)
-			continue;
+		if (ctl->options.run_tests & TESTS_RUN_SNAPS) {
 
-		err_ptr = tests_run_snapshot(ctl);
-		if (err_ptr && IS_ERR(err_ptr)) {
-			fprintf(stderr, "Aborting due to error on snapshots: %s\n",
-					strerror((-PTR_ERR(err_ptr))));
-			ctl->keep_running = 0;
-			break;
+			err_ptr = tests_run_snapshot(ctl);
+			if (err_ptr && IS_ERR(err_ptr)) {
+				fprintf(stderr, "Aborting due to error on snapshots: %s\n",
+						strerror((-PTR_ERR(err_ptr))));
+				ctl->keep_running = 0;
+				break;
+			}
+		}
+
+		if (ctl->options.run_tests & TESTS_RUN_SYNCS) {
+			err_ptr = tests_run_sync(ctl);
+			if (err_ptr && IS_ERR(err_ptr)) {
+				fprintf(stderr, "Aborting due to error on sync: %s\n",
+						strerror((-PTR_ERR(err_ptr))));
+				ctl->keep_running = 0;
+				break;
+			}
 		}
 
 		curr_time = time(NULL);
@@ -389,7 +537,10 @@ snapshot_only:
 
 	} while(ctl->keep_running);
 
-	printf("Snapshot'ing finished.\n");
+	if (ctl->options.run_tests & TESTS_RUN_SNAPS)
+		printf("Snapshot'ing finished with %d tests\n", ctl->total_snaps);
+	if (ctl->options.run_tests & TESTS_RUN_SYNCS)
+		printf("Sync'ing finished with %d tests.\n", ctl->total_syncs);
 
 	for (i = 0; i < ctl->chmod_threads; i ++) {
 		err = pthread_join(tid_chmod[i], NULL);

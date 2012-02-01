@@ -27,8 +27,13 @@ void tests_options_init(struct tests_options * options)
 
 	options->init = 0;
 	options->plot = 0;
-	options->chmod_only = 0;
-	options->snapshot_only = 0;
+//	options->chmod_only = 0;
+//	options->snapshot_only = 0;
+
+	// default test: chmods & async snapshots
+	//options->run_tests = (TESTS_RUN_CHMOD|TESTS_RUN_SNAPS);
+	options->run_tests = TESTS_RUN_MODEL_CAS;
+
 	options->subvolume_path = NULL;
 	options->runtime = TESTS_DEFAULT_RUNTIME;
 
@@ -101,6 +106,9 @@ int tests_ctl_init(struct tests_ctl * ctl, char * subvol, char * snap,
 	ctl->chmod_threads = (chmod_threads ? chmod_threads : 1);
 	ctl->current_state = TESTS_STATE_NONE;
 	ctl->current_version = 0;
+
+	ctl->total_snaps = 0;
+	ctl->total_syncs = 0;
 
 	err = -ENOMEM;
 	size = sizeof(*ctl->log_chmod) * ctl->chmod_threads;

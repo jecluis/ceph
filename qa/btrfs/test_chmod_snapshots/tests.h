@@ -21,8 +21,10 @@
 #define TESTS_STATE_DB_NEXT			(0x09)
 #define TESTS_STATE_POST_DESTROY	(0x0A)
 #define TESTS_STATE_PD_NEXT			(0x0B)
+#define TESTS_STATE_SYNC_START		(0x0C)
+#define TESTS_STATE_SYNC_END		(0x0D)
 
-#define TESTS_NUM_STATES 			(0x0B+1)
+#define TESTS_NUM_STATES 			(0x0D+1)
 
 #define TESTS_NUM_BUCKETS			13
 
@@ -42,18 +44,20 @@ static const int TESTS_BUCKETS_LIMITS[TESTS_NUM_BUCKETS] = {
 
 
 static const char * TESTS_STATE_NAME[TESTS_NUM_STATES] = {
-	"NONE",
-	"NONE (NEXT)",
-	"CREATE",
-	"CREATE (NEXT)",
-	"WAIT BEGIN",
-	"WAIT BEGIN (NEXT)",
-	"WAIT END",
-	"WAIT END (NEXT)",
-	"DESTROY BEGIN",
-	"DESTROY BEGIN (NEXT)",
-	"POST DESTROY",
-	"POST DESTROY (NEXT)",
+	"None",
+	"None-NEXT",
+	"Create",
+	"Create-NEXT",
+	"WaitBegin",
+	"WaitBegin-NEXT",
+	"WaitEnd",
+	"WaitEnd-NEXT",
+	"DestroyBegin",
+	"DestroyBegin-NEXT",
+	"PostDestroy",
+	"PostDestroy-NEXT",
+	"SyncBegin",
+	"SyncEnd"
 };
 
 struct tests_log_chmod_result {
