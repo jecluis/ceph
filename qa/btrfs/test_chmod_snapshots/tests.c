@@ -387,7 +387,6 @@ void * tests_run_file_creation(void * args)
 
 		gettimeofday(&tv_start, NULL);
 		state_start = __sync_add_and_fetch(&ctl->current_state, 0);
-
 		err = creat(filename, S_IRWXU|S_IRWXG|S_IRWXO);
 		if (err < 0) {
 			fprintf(stderr, "creating a file (%s @ %s): %s\n",
@@ -395,6 +394,15 @@ void * tests_run_file_creation(void * args)
 			free(filename);
 			goto out;
 		}
+#if 0
+		err = symlink("TEST_FILE", filename);
+		if (err < 0) {
+			fprintf(stderr, "creating a symlink (%s @ %s): %s\n",
+					filename, get_current_dir_name(), strerror(errno));
+			free(filename);
+			goto out;
+		}
+#endif
 		gettimeofday(&tv_end, NULL);
 		state_end = __sync_add_and_fetch(&ctl->current_state, 0);
 		cnt ++;
