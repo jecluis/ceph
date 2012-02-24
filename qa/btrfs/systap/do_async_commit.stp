@@ -1,0 +1,222 @@
+#!/usr/bin/env stap
+
+global pid
+global latencies
+global nested_lvl
+global do_print
+global agg_latencies
+global commit_nr
+/*global wanted_lats
+global wanted_lats_start*/
+global profile
+global LATENCY_THRESHOLD
+
+probe begin
+{
+	pid = 0
+	commit_nr = 0
+
+	LATENCY_THRESHOLD = -1
+}
+
+probe kernel.function("do_async_commit").call
+{
+	pid = tid()
+	nested_lvl = 0
+}
+
+probe kernel.function("do_async_commit").return
+{
+	pid = 0
+	commit_nr ++
+}
+
+/*
+probe timer.profile
+{
+	if (pid != 0 && tid() == pid) {
+		n = symdata(addr())
+		profile[n] <<< 1
+	}
+}
+*/
+
+probe kernel.function("*@fs/btrfs/*.c").call,
+	kernel.function("*@mm/filemap*").call,
+	kernel.function("__lock_page").call,
+	kernel.function("*@kernel/sched.c").call,
+	kernel.function("*@mm/page-writeback.c").call,
+	kernel.function("generic_writepages").call,
+	kernel.function("*@kernel/wait.c").call,
+	kernel.function("*@fs/*.c").call
+{
+	if (pid != 0 && tid() == pid) {
+		nested_lvl++
+		pf = probefunc()
+		latencies[nested_lvl, pf] = gettimeofday_us();
+		str_indent = thread_indent(1)
+
+		printf("%10s | %s[%d] %s\n", ">>>", str_indent, nested_lvl, pf);
+/*		printf("%s %s {\n", str_indent, probefunc()); */
+	}
+}
+
+probe kernel.function("btrfs_wait_marked_extents").call,
+	  kernel.function("btrfs_write_marked_extents").call
+{
+	if (pid != 0 && tid() == pid) {
+		printf("%10s | %s[%d] %s\n", ">>>",
+				thread_indent(0), nested_lvl, probefunc())
+		do_print = 1
+	}
+}
+
+/*
+probe kernel.function("find_first_extent_bit").call,
+	  kernel.function("convert_extent_bit").call,
+	  kernel.function("filemap_fdatawrite_range").call
+{
+	if (pid != 0 && tid() == pid) {
+		pfn = probefunc()
+		wanted_lats_start[pfn, commit_nr] = gettimeofday_us()
+	}
+}
+*/
+
+probe kernel.function("*@kernel/spinlock.c").call
+{ 
+	if (pid != 0 && tid() == pid) {
+		nested_lvl++
+		pfn = symname($addr)
+		latencies[nested_lvl, pfn] = gettimeofday_us();
+		thread_indent(1)
+	}
+}
+
+probe kernel.function("*@fs/btrfs/*.c").return,
+	kernel.function("*@mm/filemap*").return,
+	kernel.function("__lock_page").return,
+	kernel.function("*@kernel/sched.c").return,
+	kernel.function("generic_writepages").return,
+	kernel.function("*@mm/page-writeback.c").return,
+	kernel.function("*@kernel/wait.c").return,
+	kernel.function("*@fs/*.c").return
+{
+	if (pid != 0 && tid() == pid) {
+		pf = probefunc()
+		start_time = latencies[nested_lvl, pf]
+		cur_time = gettimeofday_us()
+
+		if (start_time <= 0) {
+			start_time = cur_time
+		}
+
+		raw_latency = (cur_time - start_time)
+		latency = (raw_latency / 1000)
+
+		agg_latencies[commit_nr, pf] <<< raw_latency
+
+		str_indent = thread_indent(-1)
+
+/*		if (latency > 1000 || (do_print && latency > LATENCY_THRESHOLD)) { */
+/*			printf("%s } // %s (%d)\n", str_indent, pf, latency);*/
+			printf("%10d | %s[%d] %s\n", raw_latency, str_indent, nested_lvl, pf);
+/*		} */
+
+		nested_lvl--
+	}
+}
+
+probe kernel.function("btrfs_wait_marked_extents").return,
+	  kernel.function("btrfs_write_marked_extents").return
+{
+	if (pid != 0 && tid() == pid) {
+		printf("%10d | %s[%d] %s\n",
+				latencies[nested_lvl, probefunc()],
+				thread_indent(0), nested_lvl, probefunc())
+		do_print = 0
+	}
+}
+
+/*
+probe kernel.function("find_first_extent_bit").return,
+	  kernel.function("convert_extent_bit").return,
+	  kernel.function("filemap_fdatawrite_range").return
+{
+	if (pid != 0 && tid() == pid) {
+		pfn = probefunc()
+		lat_start = wanted_lats_start[pfn, commit_nr]
+		lat = gettimeofday_us() - lat_start
+
+		wanted_lats[pfn, commit_nr] <<< lat
+	}
+}
+*/
+
+probe kernel.function("*@kernel/spinlock.c").return
+{ 
+	if (pid != 0 && tid() == pid) {
+		pf = symname($addr)
+		start_time = latencies[nested_lvl, pf]
+		cur_time = gettimeofday_us()
+		
+		if (start_time <= 0) {
+			start_time = cur_time
+		}
+
+		raw_latency = (cur_time - start_time)
+		latency = (raw_latency / 1000)
+
+		agg_latencies[commit_nr, pf] <<< raw_latency
+
+		str_indent = thread_indent(-1)
+
+		if (latency > 1000 || (do_print && latency > LATENCY_THRESHOLD)) { 
+			printf("%10d | %s[%d] %s\n", raw_latency, str_indent, nested_lvl, pf);
+		}
+		
+		nested_lvl--
+	}
+}
+
+
+probe end
+{
+	foreach ([cnr, pfn] in agg_latencies) {
+		raw_sum = @sum(agg_latencies[cnr, pfn])
+		sum = (raw_sum / 1000)
+
+		if (sum < 10)
+			continue
+
+		printf("%40s\t%3d\t%10d\t%5d\n", pfn, cnr,
+				sum, @count(agg_latencies[cnr, pfn]))
+	}
+
+	/*
+	print("-------------------- WANNA TRACE ----------------------\n")
+	foreach ([pfn, cnr] in wanted_lats) {
+		raw_sum = @sum(wanted_lats[pfn, cnr])
+		sum = raw_sum / 1000
+		count = @count(wanted_lats[pfn, cnr])
+
+		printf("%3d ) %40s\t%10d\t%5d\n",
+				cnr, pfn, sum, count)
+	}
+
+	print("\n")
+	*/
+	
+	/*
+	print("----------------------- PROFILE ------------------------\n")
+	foreach (n in profile- limit 10) {
+		printf("%40s\t%5d\n", n, @count(profile[n]))
+	}
+
+	delete profile
+	*/
+
+	delete agg_latencies
+/*	delete wanted_lats
+	delete wanted_lats_start */
+}

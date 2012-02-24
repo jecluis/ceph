@@ -1,0 +1,19 @@
+probe kernel.function("*@kernel/spinlock.c").call
+{ 
+	name = execname() 
+    printf(">>>\texec(%s) %s %s\n", name, probefunc(), symname($addr)) 
+}
+
+probe kernel.function("*@kernel/spinlock.c").return
+{ 
+	name = execname() 
+    printf("<<<\texec(%s) %s %s\n", name, probefunc(), symname($addr)) 
+}
+
+/*
+probe kernel.function("spin_unlock").inline 
+{ 
+	name = execname() 
+	printf("exec(%s) %s %s\n", name, probefunc(), $$parms) 
+} 
+*/

@@ -1,0 +1,223 @@
+#!/usr/bin/env stap
+
+global pid
+global latencies
+global nested_lvl
+global agg_latencies
+global commit_nr
+/*global wanted_lats
+global wanted_lats_start*/
+global profile
+
+global LATENCY_THRESHOLD = -1
+global USE_RAW_LATENCY = 1
+global IGNORE_NUM_COMMITS = 1
+global RUN_TOTAL_COMMITS = 1
+
+global in_do_async_commit
+global in_write_and_wait
+
+global STOP
+
+function print_info(marker, indent, indent_lvl, probefun)
+{
+	printf("%10s | %s[%d] %s\n", marker, indent, indent_lvl, probefun)
+}
+
+function print_call(probefun)
+{
+	print_info(">>>", thread_indent(0), nested_lvl, probefun)
+}
+
+function print_return(probefun)
+{
+	print_info("<<<", thread_indent(0), nested_lvl, probefun)
+}
+
+function print_latency(probefun, latency)
+{
+	printf("%10d | %s[%d] %s\n", 
+			latency, thread_indent(0), nested_lvl, probefun)
+}
+
+function mark_call(probefun)
+{
+	nested_lvl++
+	latencies[nested_lvl, probefun] = gettimeofday_us();
+	thread_indent(1)
+
+	print_call(probefun)
+}
+
+function mark_return(probefun)
+{
+	start_time = latencies[nested_lvl, probefun]
+	cur_time = gettimeofday_us()
+
+	if (start_time <= 0) {
+		start_time = cur_time
+	}
+
+	raw_latency = (cur_time - start_time)
+	latency = (USE_RAW_LATENCY == 1 ? raw_latency : (raw_latency / 1000))
+
+	agg_latencies[commit_nr, probefun] <<< raw_latency
+
+	print_latency(probefun, latency)
+	thread_indent(-1)
+
+	delete latencies[nested_lvl, probefun]
+	nested_lvl --
+}
+
+function cond_skip()
+{
+	return !((in_do_async_commit == 1) && (in_write_and_wait == 1) 
+			&& (commit_nr > IGNORE_NUM_COMMITS)
+			&& (STOP == 0))
+}
+
+probe begin
+{
+	pid = 0
+	commit_nr = 1
+
+	in_do_async_commit = 0
+	in_write_and_wait = 0
+
+	STOP = 0
+}
+
+probe kernel.function("do_async_commit").call
+{
+	pid = tid()
+	nested_lvl = 0
+
+	in_do_async_commit = 1
+
+	mark_call(probefunc())
+}
+
+probe kernel.function("do_async_commit").return
+{
+	pid = 0
+	commit_nr ++
+
+	in_do_async_commit = 0
+
+	mark_return(probefunc())
+
+	if (commit_nr > RUN_TOTAL_COMMITS + IGNORE_NUM_COMMITS)
+		STOP = 1
+}
+
+probe kernel.function("btrfs_write_and_wait_transaction").call
+{
+	if (pid != 0 && tid() == pid) {
+		in_write_and_wait = 1
+		mark_call(probefunc())
+	}
+}
+
+probe kernel.function("btrfs_write_and_wait_transaction").return
+{
+	if (pid != 0 && tid() == pid) {
+		in_write_and_wait = 0
+		mark_return(probefunc())
+	}
+}
+
+probe kernel.function("*@mm/filemap*").call,
+	kernel.function("__lock_page").call,
+	kernel.function("*@kernel/sched.c").call,
+	kernel.function("*@mm/page-writeback.c").call,
+	kernel.function("generic_writepages").call,
+	kernel.function("*@kernel/wait.c").call,
+	kernel.function("*@fs/*.c").call
+{
+	if (cond_skip())
+		next
+
+	if (pid != 0 && tid() == pid) {
+		mark_call(probefunc())
+	}
+}
+
+probe kernel.function("*@kernel/spinlock.c").call
+{
+	if (cond_skip())
+		next
+
+	if (pid != 0 && tid() == pid) {
+		pfn = symname($addr)
+		mark_call(pfn)
+	}
+}
+
+probe kernel.function("*@mm/filemap*").return,
+	kernel.function("__lock_page").return,
+	kernel.function("*@kernel/sched.c").return,
+	kernel.function("generic_writepages").return,
+	kernel.function("*@mm/page-writeback.c").return,
+	kernel.function("*@kernel/wait.c").return,
+	kernel.function("*@fs/*.c").return
+{
+	if (cond_skip())
+		next
+
+	if (pid != 0 && tid() == pid) {
+		mark_return(probefunc())
+	}
+}
+
+probe kernel.function("*@kernel/spinlock.c").return
+{
+	if (cond_skip())
+		next
+
+	if (pid != 0 && tid() == pid) {
+		mark_return(symname($addr))
+	}
+}
+
+
+probe end
+{
+	foreach ([cnr, pfn] in agg_latencies) {
+		raw_sum = @sum(agg_latencies[cnr, pfn])
+		sum = (raw_sum / 1000)
+
+		if (sum < 10)
+			continue
+
+		printf("%40s\t%3d\t%10d\t%5d\n", pfn, cnr,
+				sum, @count(agg_latencies[cnr, pfn]))
+	}
+
+	/*
+	print("-------------------- WANNA TRACE ----------------------\n")
+	foreach ([pfn, cnr] in wanted_lats) {
+		raw_sum = @sum(wanted_lats[pfn, cnr])
+		sum = raw_sum / 1000
+		count = @count(wanted_lats[pfn, cnr])
+
+		printf("%3d ) %40s\t%10d\t%5d\n",
+				cnr, pfn, sum, count)
+	}
+
+	print("\n")
+	*/
+	
+	/*
+	print("----------------------- PROFILE ------------------------\n")
+	foreach (n in profile- limit 10) {
+		printf("%40s\t%5d\n", n, @count(profile[n]))
+	}
+
+	delete profile
+	*/
+
+	delete agg_latencies
+/*	delete wanted_lats
+	delete wanted_lats_start */
+}

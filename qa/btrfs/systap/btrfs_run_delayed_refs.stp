@@ -1,0 +1,156 @@
+#!/usr/bin/env stap
+
+global agg_times
+#global pid_filter
+global on_snap
+global pid_marker
+global ts
+
+probe begin
+{
+	on_snap = 0
+	ts = gettimeofday_us()
+#	thread_indent(1)
+}
+
+# filter functions (only trace pids that hit this functions)
+# 
+
+probe module("btrfs").function("do_async_commit").call
+{
+	on_snap = 1
+	pid_marker[tid()] = "async"
+	print_in(execname(), tid(), probefunc())
+	printf("\n")
+#	pid_filter[tid()] = 1
+}
+
+probe module("btrfs").function("btrfs_create").call
+{
+	pid_marker[tid()] = "create"
+	print_in(execname(), tid(), probefunc())
+	printf("\n")
+#	pid_filter[tid()] = 1
+}
+
+probe module("btrfs").function("do_async_commit").return
+{
+	on_snap = 0
+	delete pid_marker[tid()]
+	print_generic(execname(), tid(), "<<<", probefunc())
+	printf("\n")
+#	delete pid_filter[tid()]
+}
+
+probe module("btrfs").function("btrfs_create").return
+{
+#	delete pid_filter[tid()]
+	print_generic(execname(), tid(), "<<<", probefunc())
+	printf("\n")
+	delete pid_marker[tid()]
+}
+
+function get_snap_status()
+{
+	return (on_snap == 1 ? "on" : "off")
+}
+
+function get_desc_exec()
+{
+	return sprintf("%s(%d/%d)", execname(), tid(), cpu())
+}
+
+function get_desc(field_len)
+{
+	desc = get_desc_exec()
+	len = strlen(desc)
+
+	# 8 from TS (7) + space; 1 from final ':'
+	padding = field_len - 8 - len - 1
+	if (padding < 0) {
+		padding = 0
+	}
+	this_ts = gettimeofday_us() - ts
+	if (this_ts < 0)
+		this_ts = 0
+	
+	return sprintf("%7d %s:%-*s", this_ts, desc, padding, "")
+}
+
+function print_generic(execname, pid, marker, pfn)
+{
+	# 30 + 1 + 6 + 1 + 6 + 1 + 1 + 5 + 1 + 3 + 1 + 1 + 6 + 1 + n
+	# = 64 + n
+	printf("%40s [from: %6s; snap: %3s] %6s %s", 
+			get_desc(40), pid_marker[pid], get_snap_status(), marker, pfn)
+}
+
+function print_in(execname, pid, pfn)
+{
+	print_generic(execname, pid, ">>>", pfn)
+}
+
+function print_out(execname, pid, lat, pfn)
+{
+	printf("%40s [from: %6s; snap: %3s] %6d %s", 
+			get_desc(40), 
+			pid_marker[pid], get_snap_status(), lat, pfn)
+}
+
+probe module("btrfs").function("btrfs_run_delayed_refs").call,
+	  module("btrfs").function("btrfs_end_transaction").call,
+	  module("btrfs").function("btrfs_commit_transaction").call
+
+{
+	tid = tid()
+	pfn = probefunc()
+
+#	if (pid_filter[tid] != 1) {
+#		next
+#	}
+
+	agg_times[tid, pfn] = gettimeofday_us()
+
+	print_in(execname(), tid, pfn)
+	
+	num_refs = @cast($trans, "btrfs_trans_handle")->transaction->delayed_refs->num_heads_ready
+	flushing = @cast($trans, "btrfs_trans_handle")->transaction->delayed_refs->flushing
+	num_entries = @cast($trans, "btrfs_trans_handle")->transaction->delayed_refs->num_entries
+	in_commit = @cast($trans, "btrfs_trans_handle")->transaction->in_commit
+
+	printf(" num_refs: %d, flushing: %d, num_entries: %d, in_commit: %d\n",
+			num_refs, flushing, num_entries, in_commit)
+
+#	printf("%63s num refs    = %d\n", " ", num_refs)
+#	printf("%63s flushing    = %d\n", " ", flushing)
+#	printf("%63s num entries = %d\n", " ", num_entries)
+
+#	print_backtrace()
+}
+
+probe module("btrfs").function("btrfs_run_delayed_refs").return,
+	  module("btrfs").function("btrfs_end_transaction").return,
+	  module("btrfs").function("btrfs_commit_transaction").return
+{
+	tid = tid()
+	pfn = probefunc()
+
+#	if (pid_filter[tid] != 1) {
+#		next
+#	}
+	
+	lat = gettimeofday_us() - agg_times[tid, pfn]
+
+	print_out(execname(), tid, lat, pfn)
+	printf("\n")
+}
+
+#probe module("btrfs").function("btrfs_write_dirty_block_groups").call
+#{
+#	printf("%57s%6s %s\n", " ", ">>>", probefunc()) 
+#}
+#
+#probe module("btrfs").function("btrfs_write_dirty_block_groups").return
+#{
+#	printf("%57s%6s %s\n", " ", "<<<", probefunc()) 
+#}
