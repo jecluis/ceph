@@ -15,7 +15,7 @@
 #include "PaxosService.h"
 #include "common/Clock.h"
 #include "Monitor.h"
-
+#include "MonitorObjectStore.h"
 
 
 #include "common/config.h"
@@ -28,12 +28,6 @@ static ostream& _prefix(std::ostream *_dout, Monitor *mon, Paxos *paxos, int mac
 		<< "(" << mon->get_state_name()
 		<< ").paxosservice(" << get_paxos_name(machine_id) << ") ";
 }
-
-const char *PaxosService::get_machine_name()
-{
-  return paxos->get_machine_name();
-}
-
 
 bool PaxosService::dispatch(PaxosServiceMessage *m)
 {
@@ -124,9 +118,12 @@ void PaxosService::propose_pending()
    *	   to encode whatever is pending on the implementation class into a
    *	   bufferlist, so we can then propose that as a value through Paxos.
    */
+  ObjectStore::Transaction t;
   bufferlist bl;
-  encode_pending(bl);
+  encode_pending(&t);
   have_pending = false;
+
+  t->encode(bl);
 
   // apply to paxos
   paxos->wait_for_commit_front(new C_Active(this));
@@ -206,3 +203,21 @@ void PaxosService::shutdown()
     proposal_timer = 0;
   }
 }
+
+void PaxosService::put_version(MonitorDBStore::Transaction *t,
+			       string prefix, version_t ver, bufferlist& bl)
+{
+  ostringstream os;
+  os << ver;
+  string key = db->combine_strings(prefix, os.str());
+  t->put(get_service_name(), key, bl);
+}
+
+int PaxosService::get_version(string prefix, version_t ver, bufferlist& bl)
+{
+  ostringstream os;
+  os << ver;
+  string key = db->combine_strings(prefix, os.str());
+  return db->get(get_service_name(), key, bl);
+}
+

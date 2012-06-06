@@ -17,6 +17,7 @@
 
 #include "messages/PaxosServiceMessage.h"
 #include "include/Context.h"
+#include "Paxos.h"
 
 class Monitor;
 class Paxos;
@@ -40,7 +41,12 @@ public:
    * The Paxos instance to which this class is associated with
    */
   Paxos *paxos;
-  
+  /**
+   * Our name. This will be associated with the class implementing us, and will
+   * be used mainly for store-related operations.
+   */
+  string service_name;
+
 protected:
   /**
    * @defgroup PaxosService_h_callbacks Callback classes
@@ -120,18 +126,20 @@ public:
   /**
    * @param mn A Monitor instance
    * @param p A Paxos instance
+   * @parem name Our service's name.
    */
-  PaxosService(Monitor *mn, Paxos *p) : mon(mn), paxos(p),
-					proposal_timer(0),
-					have_pending(false) { }
+  PaxosService(Monitor *mn, Paxos *p, string name) 
+    : mon(mn), paxos(p), proposal_timer(0),
+      have_pending(false), service_name(name) { }
+
   virtual ~PaxosService() {}
 
   /**
-   * Get the machine name.
+   * Get the service's name.
    *
-   * @returns The machine name.
+   * @returns The service's name.
    */
-  const char *get_machine_name();
+  string get_service_name() { return service_name; }
   
   // i implement and you ignore
   /**
@@ -241,9 +249,9 @@ public:
    *
    * @invariant This function is only called on a Leader.
    *
-   * @param[out] bl A bufferlist containing the encoded pending state
+   * @param t The transaction to hold all changes.
    */
-  virtual void encode_pending(bufferlist& bl) = 0;
+  virtual void encode_pending(MonitorDBStore::Transaction *t) = 0;
 
   /**
    * Discard the pending state
@@ -332,6 +340,57 @@ public:
    */
   virtual void get_health(list<pair<health_status_t,string> >& summary,
 			  list<pair<health_status_t,string> > *detail) const { }
+
+ private:
+  const string last_committed_name = "last_committed";
+  const string first_committed_name = "first_committed";
+  const string last_accepted_name = "last_accepted";
+  const string mkfs_name = "mkfs";
+
+ protected:
+
+  /**
+   * @defgroup PaxosService_h_store_funcs Back storage interface functions
+   * @{
+   */
+  void put_last_committed(MonitorDBStore::Transaction *t, version_t ver) {
+    t->put(get_service_name(), last_committed_name, ver);
+  }
+
+  void put_version(MonitorDBStore::Transaction *t, version_t ver,
+		   bufferlist& bl) {
+    t->put(get_service_name(), ver, bl);
+  }
+
+  void put_version(MonitorDBStore::Transaction *t, 
+		   string prefix, version_t ver, bufferlist& bl);
+
+  void erase_mkfs(MonitorDBStore::Transaction *t) {
+    t->erase(mkfs_name, get_service_name());
+  }
+
+  version_t get_first_committed() {
+    return mon->store->get(get_service_name(), first_committed_name);
+  }
+
+  version_t get_last_committed() {
+    return mon->store->get(get_service_name(), last_committed_name);
+  }
+
+  version_t get_version() {
+    return get_last_committed();
+  }
+
+  int get_version(version_t ver, bufferlist& bl) {
+    return mon->store->get(get_service_name(), ver, bl);
+  }
+
+  int get_version(string prefix, version_t ver, bufferlist& bl);
+
+
+  int get_mkfs(bufferlist& bl) {
+    return mon->store->get(mkfs_name, get_service_name(), bl);
+  }
 
   /**
    * @}
