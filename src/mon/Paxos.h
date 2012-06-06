@@ -48,6 +48,8 @@ e 12v
 
 #include "common/Timer.h"
 
+#include "os/ObjectStore.h"
+
 class Monitor;
 class MMonPaxos;
 class Paxos;
@@ -75,8 +77,7 @@ class Paxos {
   Monitor *mon;
 
   // my state machine info
-  int machine_id;
-  const char *machine_name;
+  const string *paxos_name;
 
   friend class Monitor;
   friend class PaxosService;
@@ -831,10 +832,9 @@ public:
    * @param m A monitor
    * @param mid A machine id
    */
-  Paxos(Monitor *m,
-	int mid) : mon(m),
-		   machine_id(mid), 
-		   machine_name(get_paxos_name(mid)),
+  Paxos(Monitor *m, const string name) 
+		 : mon(m),
+		   paxos_name(name),
 		   state(STATE_RECOVERING),
 		   first_committed(0),
 		   last_pn(0),
@@ -849,8 +849,8 @@ public:
 		   accept_timeout_event(0),
 		   clock_drift_warned(0) { }
 
-  const char *get_machine_name() const {
-    return machine_name;
+  const string get_name() const {
+    return paxos_name;
   }
 
   void dispatch(PaxosServiceMessage *m);
@@ -909,6 +909,21 @@ public:
   void store_state(MMonPaxos *m);
 
   /**
+   * Helper function of Paxos::store_state which will write all the values
+   * between two iterator positions to the underlying store.
+   *
+   * This function will also apply the transactions encoded in each of the
+   * bufferlists in the map.
+   *
+   * @param t A transaction
+   * @param start An iterator pointing to the first position we want
+   * @param end An iterator pointing to the last position we want
+   */
+  void store_state_write_map(MonitorDBStore::Transaction& t,
+			     map<version_t,bufferlist>::iterator start,
+			     map<version_t,bufferlist>::iterator end);
+
+  /**
    * @todo This appears to be used only by the OSDMonitor, and I would say
    *	   its objective is to allow a third-party to have a "private"
    *	   state dir. -JL
@@ -934,7 +949,7 @@ public:
    * @param force If specified, we may even erase the latest stashed version
    *		  iif @p first is higher than that version.
    */
-  void trim_to(version_t first, bool force=false);
+  void trim_to(ObjectStore::Transaction *t, version_t first, bool force=false);
  
   /**
    * @defgroup Paxos_h_slurping_funcs Slurping-related functions
@@ -1080,17 +1095,6 @@ public:
    * @{
    */
   /**
-   * Get the latest version onto stable storage.
-   *
-   * Keeping the latest version on a predefined location makes it easier to
-   * access, since we know we always have the latest version on the same
-   * place.
-   *
-   * @param v the latest version
-   * @param bl the latest version's value
-   */
-  void stash_latest(version_t v, bufferlist& bl);
-  /**
    * Get the latest stashed version's value
    *
    * @param[out] bl the latest stashed version's value
@@ -1110,6 +1114,8 @@ public:
   /**
    * @}
    */
+ protected:
+  virtual MonitorDBStore *get_store() = 0;
 };
 
 
