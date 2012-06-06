@@ -319,9 +319,17 @@ int Monitor::init()
     extract_save_mon_key(keyring);
   }
 
-  ostringstream os;
-  os << g_conf->mon_data << "/keyring";
-  int r = keyring.load(cct, os.str());
+  string keyring_loc;
+
+  if (g_conf->keyring != "keyring")
+    keyring_loc = g_conf->keyring;
+  else {
+    ostringstream os;
+    os << g_conf->mon_data << "/keyring";
+    keyring_loc = os.str();
+  }
+
+  int r = keyring.load(cct, keyring_loc);
   if (r < 0) {
     EntityName mon_name;
     mon_name.set_type(CEPH_ENTITY_TYPE_MON);
@@ -331,7 +339,7 @@ int Monitor::init()
       keyring.add(mon_name, mon_key);
       bufferlist bl;
       keyring.encode_plaintext(bl);
-      store->put_bl_ss(bl, "keyring", NULL);
+      write_default_keyring(bl);
     } else {
       derr << "unable to load initial keyring " << g_conf->keyring << dendl;
       return r;
@@ -2033,7 +2041,7 @@ int Monitor::mkfs(bufferlist& osdmapbl)
   }
 
   KeyRing keyring;
-  r = keyring.load(g_ceph_context, g_conf->keyring);
+  int r = keyring.load(g_ceph_context, g_conf->keyring);
   if (r < 0) {
     derr << "unable to load initial keyring " << g_conf->keyring << dendl;
     return r;
@@ -2049,6 +2057,28 @@ int Monitor::mkfs(bufferlist& osdmapbl)
   return 0;
 }
 
+int Monitor::write_default_keyring(bufferlist& bl)
+{
+  ostringstream os;
+  os << g_conf->mon_data << "/keyring";
+
+  int err = 0;
+  int fd = ::open(os.str().c_str(), O_WRONLY|O_CREAT, 0644);
+  if (fd < 0) {
+    err = -errno;
+    dout(0) << __func__ << " failed to open " << os.str() 
+	    << ": " << cpp_strerror(err) << dendl;
+    return err;
+  }
+
+  err = bl.write_fd(fd);
+  if (!err)
+    ::fsync(fd);
+  ::close(fd);
+
+  return err;
+}
+
 void Monitor::extract_save_mon_key(KeyRing& keyring)
 {
   EntityName mon_name;
@@ -2060,7 +2090,7 @@ void Monitor::extract_save_mon_key(KeyRing& keyring)
     pkey.add(mon_name, mon_key);
     bufferlist bl;
     pkey.encode_plaintext(bl);
-    store->put_bl_ss(bl, "keyring", NULL);
+    write_default_keyring(bl);
     keyring.remove(mon_name);
   }
 }
