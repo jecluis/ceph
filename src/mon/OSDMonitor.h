@@ -173,7 +173,7 @@ private:
   bool prepare_remove_snaps(class MRemoveSnaps *m);
 
  public:
-  OSDMonitor(Monitor *mn, Paxos *p);
+  OSDMonitor(Monitor *mn, Paxos *p, string service_name);
 
   void tick();  // check state, take actions
 
