@@ -371,6 +371,75 @@ public:
 
  protected:
   /**
+   * Check if we are in the Paxos ACTIVE state.
+   *
+   * @note This function is a wrapper for Paxos::is_active
+   *
+   * @returns true if in state ACTIVE; false otherwise.
+   */
+  bool is_active() {
+    return paxos->is_active();
+  }
+
+  /**
+   * Check if we are readable.
+   *
+   * The services implementing us used to rely on this function to check if
+   * Paxos was readable, back when we had a Paxos instance for each service.
+   * Now, we only have a single Paxos instance, shared by all the services.
+   *
+   * Since each service longer have their own private Paxos, they can no
+   * longer assume each Paxos version as theirs, thus we cannot make this
+   * function a plain wrapper for the Paxos::is_readable as is. Currently,
+   * Paxos versions are Paxos'; our versions are ours'. There's no more
+   * in-breeding here.
+   *
+   * So, since we cannot infer which Paxos version the version @p ver have been
+   * "mapped" to (i.e., which Paxos version its proposal turned out to be), we
+   * are forced to make some new rules, although highly based on Paxos'.
+   *
+   * Since "being readable" is a state tightly-knit with the Paxos state, we
+   * are going to say that a given version @p ver is readable iif:
+   *
+   *  - ver <= last_committed (same as in Paxos, but this is *our*
+   *  last_committed, instead of Paxos' last_committed); and
+   *  - Paxos::is_readable(0) returns true.
+   *
+   * We are relying on passing '0' as an argument to Paxos::is_readable because
+   * we know it will then perform all the checks we are really interested in.
+   * Feel free to head out to Paxos.h for further explanation on this function.
+   *
+   * @param ver The version we want to check if is readable
+   * @returns true if it is readable; false otherwise
+   */
+  bool is_readable(version_t ver = 0) {
+    if (ver > get_last_committed())
+      return false;
+
+    return paxos->is_readable(0);
+  }
+
+  /**
+   * Check if we are writeable.
+   *
+   * @note This function is a wrapper for Paxos::is_writeable
+   *
+   * @returns true if writeable; false otherwise
+   */
+  bool is_writeable() {
+    return paxos->is_writeable();
+  }
+
+  /**
+   * Cancel events.
+   *
+   * @note This function is a wrapper for Paxos::cancel_events
+   */
+  void cancel_events() {
+    paxos->cancel_events();
+  }
+
+  /**
    * @defgroup PaxosService_h_store_funcs Back storage interface functions
    * @{
    */
