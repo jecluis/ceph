@@ -243,28 +243,19 @@ void Paxos::store_state(MMonPaxos *m)
 	     << last_committed << "]" << dendl;
     // we should apply the state here -- decode every single bufferlist in the
     // map and append the transactions to 't'.
-    store_state_write_map(&t, start, end);
+    map<version_t,bufferlist>::iterator it;
+    for (it = start; it != end; ++it) {
+      // write the bufferlist as the version's value
+      t.put(get_name(), it->first, it->second);
+      // decode the bufferlist and append it to the transaction we will shortly
+      // apply.
+      decode_append_transaction(t, it->second);
+    }
     t.put(get_name(), "last_committed", last_committed);
     t.put(get_name(), "first_committed", first_committed);
   }
   if (!t.empty())
     get_store()->apply_transaction(t);
-}
-
-void Paxos::store_state_write_map(MonitorDBStore::Transaction& t,
-				  map<version_t,bufferlist>::iterator start,
-				  map<version_t,bufferlist>::iterator end)
-{
-  map<version_t,bufferlist>::iterator it;
-  for (it = start; it != end; ++it) {
-    // write the bufferlist as the version's value
-    t.put(get_name(), it->first, it->second);
-    // decode the bufferlist and append it to the transaction we will shortly
-    // apply.
-    MonitorDBStore::Transaction vt;
-    vt.decode(it->second);
-    t.append(vt);
-  }
 }
 
 // leader
@@ -282,7 +273,7 @@ void Paxos::handle_last(MMonPaxos *last)
   // push it to them.
   peer_last_committed[last->get_source().num()] = last->last_committed;
 
-  // did we receive a committed value?
+  // store any committed values if any are specified in the message
   store_state(last);
       
   // do they accept your pn?
@@ -554,10 +545,7 @@ void Paxos::commit()
 
   // decode the value and apply its transaction to the store.
   // this value can now be read from last_committed.
-  MonitorDBStore::Transaction value_tx;
-  value_tx.decode(new_value.begin());
-  // append the encoded transaction to our own transaction and apply it.
-  t.append(value_tx);
+  decode_append_transaction(t, new_value);
 
   get_store()->apply_transaction(t);
 

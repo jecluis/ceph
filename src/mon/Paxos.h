@@ -988,19 +988,22 @@ public:
    */
   void store_state(MMonPaxos *m);
   /**
-   * Helper function of Paxos::store_state which will write all the values
-   * between two iterator positions to the underlying store.
+   * Helper function to decode a bufferlist into a transaction and append it
+   * to another transaction.
    *
-   * This function will also apply the transactions encoded in each of the
-   * bufferlists in the map.
+   * This function is used during the Leader's commit and during the
+   * Paxos::store_state in order to apply the bufferlist's transaction onto
+   * the store.
    *
-   * @param t A transaction
-   * @param start An iterator pointing to the first position we want
-   * @param end An iterator pointing to the last position we want
+   * @param t The transaction to which we will append the operations
+   * @param bl A bufferlist containing an encoded transaction
    */
-  void store_state_write_map(MonitorDBStore::Transaction& t,
-			     map<version_t,bufferlist>::iterator start,
-			     map<version_t,bufferlist>::iterator end);
+  void decode_append_transaction(MonitorDBStore::Transaction& t,
+				 bufferlist& bl) {
+    MonitorDBStore::Transaction vt;
+    vt.decode(bl.begin());
+    t.append(vt);
+  }
 
   /**
    * @todo This appears to be used only by the OSDMonitor, and I would say
