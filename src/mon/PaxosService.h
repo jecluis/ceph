@@ -342,10 +342,21 @@ public:
 			  list<pair<health_status_t,string> > *detail) const { }
 
  private:
+  /**
+   * @defgroup PaxosService_h_store_keys Set of keys that are usually used on
+   *					 all the services implementing this
+   *					 class, and, being almost the only keys
+   *					 used, should be standardized to avoid
+   *					 mistakes.
+   * @{
+   */
   const string last_committed_name = "last_committed";
   const string first_committed_name = "first_committed";
   const string last_accepted_name = "last_accepted";
   const string mkfs_name = "mkfs";
+  /**
+   * @}
+   */
 
  protected:
 
@@ -353,44 +364,115 @@ public:
    * @defgroup PaxosService_h_store_funcs Back storage interface functions
    * @{
    */
+  /**
+   * @defgroup PaxosService_h_store_modify Wrapper function interface to access
+   *					   the back store for modification
+   *					   purposes
+   * @{
+   */
+  /**
+   * Set the last committed version to @p ver
+   *
+   * @param t A transaction to which we add this put operation
+   * @param ver The last committed version number being put
+   */
   void put_last_committed(MonitorDBStore::Transaction *t, version_t ver) {
     t->put(get_service_name(), last_committed_name, ver);
   }
-
+  /**
+   * Put the contents of @p bl into version @p ver
+   *
+   * @param t A transaction to which we will add this put operation
+   * @param ver The version to which we will add the value
+   * @param bl A bufferlist containing the version's value
+   */
   void put_version(MonitorDBStore::Transaction *t, version_t ver,
 		   bufferlist& bl) {
     t->put(get_service_name(), ver, bl);
   }
-
+  /**
+   * Put the contents of @p bl into version @p ver (prefixed with @p prefix)
+   *
+   * @param t A transaction to which we will add this put operation
+   * @param prefix The version's prefix
+   * @param ver The version to which we will add the value
+   * @param bl A bufferlist containing the version's value
+   */
   void put_version(MonitorDBStore::Transaction *t, 
 		   string prefix, version_t ver, bufferlist& bl);
 
+  /**
+   * Remove our mkfs entry from the store
+   *
+   * @param t A transaction to which we will add this erase operation
+   */
   void erase_mkfs(MonitorDBStore::Transaction *t) {
     t->erase(mkfs_name, get_service_name());
   }
+  /**
+   * @}
+   */
 
+  /**
+   * @defgroup PaxosService_h_store_get Wrapper function interface to access
+   *					the back store for reading purposes
+   * @{
+   */
+  /**
+   * Get the first committed version
+   *
+   * @returns Our first committed version (that is available)
+   */
   version_t get_first_committed() {
     return mon->store->get(get_service_name(), first_committed_name);
   }
-
+  /**
+   * Get the last committed version
+   *
+   * @returns Our last committed version
+   */
   version_t get_last_committed() {
     return mon->store->get(get_service_name(), last_committed_name);
   }
-
+  /**
+   * Get our current version
+   *
+   * @returns Our current version
+   */
   version_t get_version() {
     return get_last_committed();
   }
-
+  /**
+   * Get the contents of a given version @p ver
+   *
+   * @param ver The version being obtained
+   * @param bl The bufferlist to be populated
+   * @return 0 on success; <0 otherwise
+   */
   int get_version(version_t ver, bufferlist& bl) {
     return mon->store->get(get_service_name(), ver, bl);
   }
-
+  /**
+   * Get the contents of a given version @p ver with a given prefix @p prefix
+   *
+   * @param prefix The intended prefix
+   * @param ver The version being obtained
+   * @param bl The bufferlist to be populated
+   * @return 0 on success; <0 otherwise
+   */
   int get_version(string prefix, version_t ver, bufferlist& bl);
-
-
+  /**
+   * Get the contents of our mkfs entry
+   *
+   * @param bl A bufferlist to populate with the contents of the entry
+   * @return 0 on success; <0 otherwise
+   */
   int get_mkfs(bufferlist& bl) {
     return mon->store->get(mkfs_name, get_service_name(), bl);
   }
+  /**
+   * @}
+   */
 
   /**
    * @}
