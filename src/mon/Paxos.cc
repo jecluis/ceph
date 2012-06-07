@@ -160,6 +160,18 @@ void Paxos::handle_collect(MMonPaxos *collect)
   collect->put();
 }
 
+/**
+ * @note This is Okay. We share our versions between peer_last_committed and
+ *	 our last_committed (inclusive), and add their bufferlists to the
+ *	 message. It will be the peer's job to apply them to his store, as
+ *	 these bufferlists will contain raw transactions.
+ *	 This function is called by both the Peon and the Leader. The Peon will
+ *	 share the state with the Leader during handle_collect(), sharing any
+ *	 values the leader may be missing (i.e., the leader's last_committed is
+ *	 lower than the peon's last_committed). The Leader will share the state
+ *	 with the Peon during handle_last(), if the peon's last_committed is
+ *	 lower than the leader's last_committed.
+ */
 void Paxos::share_state(MMonPaxos *m, version_t peer_first_committed,
 			version_t peer_last_committed)
 {
@@ -181,31 +193,22 @@ void Paxos::share_state(MMonPaxos *m, version_t peer_first_committed,
   m->last_committed = last_committed;
 }
 
-// NOTE: TODO: FIXME: THIS FUNCTION IS A BIG CLUSTERFUCK OF STUFF I CANNOT GRASP
-// AT ALL. IT FEELS LIKE IT COULD BE SIMPLIFIED IF WE COULD UNDERSTAND WHAT THE
-// HELL IS INTENDED.
+/**
+ * Store on disk a state that was shared with us
+ *
+ * Basically, we received a set of version. Or just one. It doesn't matter.
+ * What matters is that we have to stash it in the store. So, we will simply
+ * write every single bufferlist into their own versions on our side (i.e.,
+ * onto paxos-related keys), and then we will decode those same bufferlists
+ * we just wrote and apply the transactions they hold. We will also update
+ * our first and last committed values to point to the new values, if need
+ * be. All all this is done tightly wrapped in a transaction to ensure we
+ * enjoy the atomicity guarantees given by our awesome k/v store.
+ */
 void Paxos::store_state(MMonPaxos *m)
 {
   MonitorDBStore::Transaction t;
   map<version_t,bufferlist>::iterator start = m->values.begin();
-
-  // stash?
-  if (m->latest_version && m->latest_version > last_committed) {
-    dout(10) << "store_state got stash version " 
-	     << m->latest_version << ", zapping old states" << dendl;
-
-    assert(start != m->values.end() && start->first == m->latest_version);
-
-    // wipe out everything we had previously
-    trim_to(&t, last_committed + 1);
-
-    first_committed = m->latest_version;
-    last_committed = m->latest_version;
-
-    t.put(get_name(), m->latest_version, start->second);
-    t.put(get_name(), "first_committed", first_committed);
-    t.put(get_name(), "last_committed", last_committed);
-  }
 
   // build map of values to store
   // we want to write the range [last_committed, m->last_committed] only.
@@ -254,7 +257,10 @@ void Paxos::store_state_write_map(MonitorDBStore::Transaction& t,
 {
   map<version_t,bufferlist>::iterator it;
   for (it = start; it != end; ++it) {
+    // write the bufferlist as the version's value
     t.put(get_name(), it->first, it->second);
+    // decode the bufferlist and append it to the transaction we will shortly
+    // apply.
     MonitorDBStore::Transaction vt;
     vt.decode(it->second);
     t.append(vt);
