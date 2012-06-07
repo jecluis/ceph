@@ -32,7 +32,7 @@ class PaxosService {
    * @defgroup PaxosService_h_class Paxos Service
    * @{
    */
-public:
+ public:
   /**
    * The Monitor to which this class is associated with
    */
@@ -46,6 +46,29 @@ public:
    * be used mainly for store-related operations.
    */
   string service_name;
+
+ protected:
+  /**
+   * Services implementing us used to depend on the Paxos version, back when
+   * each service would have a Paxos instance for itself. However, now we only
+   * have a single Paxos instance, shared by all the services. Each service now
+   * must keep its own version, if so they wish. This variable should be used
+   * for that purpose.
+   */
+  version_t service_version;
+
+ private:
+  /**
+   * Event callback responsible for proposing our pending value once a timer 
+   * runs out and fires.
+   */
+  Context *proposal_timer;
+  /**
+   * If the implementation class has anything pending to be proposed to Paxos,
+   * then have_pending should be true; otherwise, false.
+   */
+  bool have_pending;
+
 
 protected:
   /**
@@ -110,18 +133,6 @@ protected:
   friend class C_Propose;
   
 
-private:
-  /**
-   * Event callback responsible for proposing our pending value once a timer 
-   * runs out and fires.
-   */
-  Context *proposal_timer;
-  /**
-   * If the implementation class has anything pending to be proposed to Paxos,
-   * then have_pending should be true; otherwise, false.
-   */
-  bool have_pending;
-
 public:
   /**
    * @param mn A Monitor instance
@@ -130,7 +141,7 @@ public:
    */
   PaxosService(Monitor *mn, Paxos *p, string name) 
     : mon(mn), paxos(p), proposal_timer(0),
-      have_pending(false), service_name(name) { }
+      have_pending(false), service_name(name), service_version(0) { }
 
   virtual ~PaxosService() {}
 
@@ -359,7 +370,6 @@ public:
    */
 
  protected:
-
   /**
    * @defgroup PaxosService_h_store_funcs Back storage interface functions
    * @{
