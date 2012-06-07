@@ -973,12 +973,20 @@ public:
   void share_state(MMonPaxos *m, version_t peer_first_committed,
 		   version_t peer_last_committed);
   /**
-   * Store the state held on the message m into local, stable storage.
+   * Store on disk a state that was shared with us
+   *
+   * Basically, we received a set of version. Or just one. It doesn't matter.
+   * What matters is that we have to stash it in the store. So, we will simply
+   * write every single bufferlist into their own versions on our side (i.e.,
+   * onto paxos-related keys), and then we will decode those same bufferlists
+   * we just wrote and apply the transactions they hold. We will also update
+   * our first and last committed values to point to the new values, if need
+   * be. All all this is done tightly wrapped in a transaction to ensure we
+   * enjoy the atomicity guarantees given by our awesome k/v store.
    *
    * @param m A message
    */
   void store_state(MMonPaxos *m);
-
   /**
    * Helper function of Paxos::store_state which will write all the values
    * between two iterator positions to the underlying store.
