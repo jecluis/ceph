@@ -18,6 +18,7 @@
 #include "messages/PaxosServiceMessage.h"
 #include "include/Context.h"
 #include "Paxos.h"
+#include "Monitor.h"
 
 class Monitor;
 class Paxos;
@@ -140,8 +141,12 @@ public:
    * @parem name Our service's name.
    */
   PaxosService(Monitor *mn, Paxos *p, string name) 
-    : mon(mn), paxos(p), proposal_timer(0),
-      have_pending(false), service_name(name), service_version(0) { }
+    : mon(mn), paxos(p), service_name(name),
+      service_version(0), proposal_timer(0), have_pending(false),
+      last_committed_name("last_committed"),
+      first_committed_name("first_committed"),
+      last_accepted_name("last_accepted"),
+      mkfs_name("mkfs") { }
 
   virtual ~PaxosService() {}
 
@@ -361,15 +366,16 @@ public:
    *					 mistakes.
    * @{
    */
-  const string last_committed_name = "last_committed";
-  const string first_committed_name = "first_committed";
-  const string last_accepted_name = "last_accepted";
-  const string mkfs_name = "mkfs";
+  const string last_committed_name;
+  const string first_committed_name;
+  const string last_accepted_name;
+  const string mkfs_name;
   /**
    * @}
    */
 
- protected:
+ public:
+
   /**
    * Check if we are in the Paxos ACTIVE state.
    *
@@ -423,12 +429,32 @@ public:
    * Check if we are writeable.
    *
    * @note This function is a wrapper for Paxos::is_writeable
-   *
+   ;*
    * @returns true if writeable; false otherwise
    */
   bool is_writeable() {
     return paxos->is_writeable();
   }
+
+ protected:
+
+  /**
+   * Trim our log. This implies getting rid of versions on the k/v store.
+   * Services implementing us don't have to implement this function if they
+   * don't want to, but we won't implement it for them either.
+   *
+   * This function had to be inheritted from the Paxos, since the existing
+   * services made use of it. This function should be tuned for each service's
+   * needs. We have it in this interface to make sure its usage and purpose is
+   * well understood by the underlying services.
+   *
+   * @param first The version that should become the first one in the log.
+   * @param force Optional. Each service may use it as it sees fit, but the
+   *		  expected behavior is that, when 'true', we will remove all
+   *		  the log versions even if we don't have a full map in store.
+   */
+  virtual void trim_to(version_t first, bool force = false) = 0;
+
 
   /**
    * Cancel events.
@@ -449,6 +475,9 @@ public:
    *					   purposes
    * @{
    */
+  void put_first_committed(MonitorDBStore::Transaction *t, version_t ver) {
+    t->put(get_service_name(), first_committed_name, ver);
+  }
   /**
    * Set the last committed version to @p ver
    *
@@ -479,7 +508,19 @@ public:
    */
   void put_version(MonitorDBStore::Transaction *t, 
 		   string prefix, version_t ver, bufferlist& bl);
-
+  /**
+   * Put a version number into a key composed by @p prefix and @p name
+   * combined.
+   *
+   * @param prefix The key's prefix
+   * @param name The key's suffix
+   * @param ver A version number
+   */
+  void put_version(MonitorDBStore::Transaction *t,
+		   string prefix, string name, version_t ver) {
+    string key = mon->store->combine_strings(prefix, name);
+    t->put(get_service_name(), key, ver);
+  }
   /**
    * Remove our mkfs entry from the store
    *
@@ -540,6 +581,18 @@ public:
    * @return 0 on success; <0 otherwise
    */
   int get_version(string prefix, version_t ver, bufferlist& bl);
+  /**
+   * Get a version number from a given key, whose name is composed by
+   * @p prefix and @p name combined.
+   *
+   * @param prefix Key's prefix
+   * @param name Key's suffix
+   * @returns A version number
+   */
+  version_t get_version(string prefix, string name) {
+    string key = mon->store->combine_strings(prefix, name);
+    return mon->store->get(get_service_name(), key);
+  }
   /**
    * Get the contents of our mkfs entry
    *

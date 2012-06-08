@@ -118,12 +118,12 @@ void PaxosService::propose_pending()
    *	   to encode whatever is pending on the implementation class into a
    *	   bufferlist, so we can then propose that as a value through Paxos.
    */
-  ObjectStore::Transaction t;
+  MonitorDBStore::Transaction t;
   bufferlist bl;
   encode_pending(&t);
   have_pending = false;
 
-  t->encode(bl);
+  t.encode(bl);
 
   // apply to paxos
   paxos->wait_for_commit_front(new C_Active(this));
@@ -209,7 +209,7 @@ void PaxosService::put_version(MonitorDBStore::Transaction *t,
 {
   ostringstream os;
   os << ver;
-  string key = db->combine_strings(prefix, os.str());
+  string key = mon->store->combine_strings(prefix, os.str());
   t->put(get_service_name(), key, bl);
 }
 
@@ -217,7 +217,7 @@ int PaxosService::get_version(string prefix, version_t ver, bufferlist& bl)
 {
   ostringstream os;
   os << ver;
-  string key = db->combine_strings(prefix, os.str());
-  return db->get(get_service_name(), key, bl);
+  string key = mon->store->combine_strings(prefix, os.str());
+  return mon->store->get(get_service_name(), key, bl);
 }
 
