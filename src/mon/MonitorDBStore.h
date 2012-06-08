@@ -19,13 +19,15 @@
 #include <map>
 #include <string>
 #include <boost/scoped_ptr.hpp>
+#include <sstream>
+#include "os/KeyValueDB.h"
 #include "os/LevelDBStore.h"
 
 class MonitorDBStore
 {
   boost::scoped_ptr<LevelDBStore> db;
 
- protected:
+ public:
 
   struct Op {
     uint8_t type;
@@ -33,13 +35,14 @@ class MonitorDBStore
     string key;
     bufferlist bl;
 
+    Op() { }
     Op(int t, string p, string k)
       : type(t), prefix(p), key(k) { }
     Op(int t, const string& p, string k, bufferlist& b)
       : type(t), prefix(p), key(k), bl(b) { }
 
     void encode(bufferlist& encode_bl) const {
-      ENCODE_START(1, 1, bl);
+      ENCODE_START(1, 1, encode_bl);
       ::encode(type, encode_bl);
       ::encode(prefix, encode_bl);
       ::encode(key, encode_bl);
@@ -56,8 +59,6 @@ class MonitorDBStore
       DECODE_FINISH(decode_bl);
     }
   };
-
- public:
 
   struct Transaction {
     list<Op> ops;
@@ -111,7 +112,8 @@ class MonitorDBStore
 
     void append_from_encoded(bufferlist& bl) {
       Transaction other;
-      other.decode(bl.begin());
+      bufferlist::iterator it = bl.begin();
+      other.decode(it);
       append(other);
     }
 
@@ -126,10 +128,10 @@ class MonitorDBStore
     for (list<Op>::iterator it = t.ops.begin(); it != t.ops.end(); ++it) {
       Op& op = *it;
       switch (op.type) {
-      case OP_PUT:
+      case Transaction::OP_PUT:
 	dbt->set(op.prefix, op.key, op.bl);
 	break;
-      case OP_ERASE:
+      case Transaction::OP_ERASE:
 	dbt->rmkey(op.prefix, op.key);
 	break;
       default:
@@ -141,28 +143,28 @@ class MonitorDBStore
     return db->submit_transaction_sync(dbt);
   }
 
-  int get(string prefix, string key, bufferlist& bl) {
+  int get(const string& prefix, const string& key, bufferlist& bl) {
     set<string> k;
-    k.push_back(key);
+    k.insert(key);
     map<string,bufferlist> out;
 
-    db->get(prefix, k, out);
+    db->get(prefix, k, &out);
     if (!out.empty())
       bl.append(out[key]);
 
     return 0;
   }
 
-  int get(string prefix, version_t ver, bufferlist& bl) {
+  int get(const string& prefix, const version_t ver, bufferlist& bl) {
     ostringstream os;
     os << ver;
     return get(prefix, os.str(), bl);
   }
 
-  version_t get(string prefix, string key) {
+  version_t get(const string& prefix, const string& key) {
     bufferlist bl;
     get(prefix, key, bl);
-    if (bl.empty()) // if key does not exist, assume its value is 0
+    if (bl.length()) // if key does not exist, assume its value is 0
       return 0;
 
     version_t ver;
@@ -170,16 +172,16 @@ class MonitorDBStore
     return ver;
   }
 
-  bool exists(const string prefix, const string key) {
-    Iterator it = db->iterator(prefix);
-    int err = it.lower_bound(key);
+  bool exists(const string& prefix, const string& key) {
+    KeyValueDB::Iterator it = db->get_iterator(prefix);
+    int err = it->lower_bound(key);
     if (err < 0)
       return false;
 
-    return (it.valid() && it.key() == key);
+    return (it->valid() && it->key() == key);
   }
 
-  bool exists(const string prefix, version_t ver) {
+  bool exists(const string& prefix, version_t ver) {
     ostringstream os;
     os << ver;
     return exists(prefix, os.str());
@@ -190,6 +192,12 @@ class MonitorDBStore
     out.push_back('_');
     out.append(value);
     return out;
+  }
+
+  string combine_strings(const string& prefix, const version_t ver) {
+    ostringstream os;
+    os << ver;
+    return combine_strings(prefix, os.str());
   }
 
   MonitorDBStore(const string& path) {
