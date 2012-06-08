@@ -57,14 +57,6 @@ static ostream& _prefix(std::ostream *_dout, Monitor *mon, OSDMap& osdmap) {
 
 
 /************ MAPS ****************/
-OSDMonitor::OSDMonitor(Monitor *mn, Paxos *p, string service_name)
-  : PaxosService(mn, p, service_name),
-    thrash_map(0), thrash_last_up_osd(-1)
-{
-  // we need to trim this too
-  p->add_extra_state_dir("osdmap_full");
-}
-
 
 void OSDMonitor::create_initial()
 {
