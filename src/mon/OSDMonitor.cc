@@ -83,24 +83,38 @@ void OSDMonitor::create_initial()
 
 void OSDMonitor::update_from_paxos()
 {
-  version_t paxosv = get_version();
-  if (paxosv == osdmap.epoch)
+  version_t version = get_version();
+  if (version == osdmap.epoch)
     return;
-  assert(paxosv >= osdmap.epoch);
+  assert(version >= osdmap.epoch);
 
-  dout(15) << "update_from_paxos paxos e " << paxosv 
+  dout(15) << "update_from_paxos paxos e " << version
 	   << ", my e " << osdmap.epoch << dendl;
 
+  /* We no longer have stashed versions. Maybe we can do this by reading
+   * from a full map? Maybe we should keep the last full map version on a key
+   * as well (say, osdmap_full_version), and consider that the last_committed
+   * always contains incrementals, and maybe a full version if
+   * osdmap_full_version == last_committed
+   *
+   * This ^^^^ sounds about right. Do it. We shoud then change the
+   * 'get_stashed_version()' to 'get_full_version(version_t ver)', which should
+   * then be read iif
+   *	(osdmap.epoch != osd_full_version)
+   *	&& (osdmap.epoch <= osdmap_full_version)
+   */
+  /*
   if (osdmap.epoch != get_stashed_version()) {
     bufferlist latest;
     version_t v = get_stashed(latest);
     dout(7) << "update_from_paxos loading latest full map e" << v << dendl;
     osdmap.decode(latest);
-  } 
+  }
+  */
   
   // walk through incrementals
   bufferlist bl;
-  while (paxosv > osdmap.epoch) {
+  while (version > osdmap.epoch) {
     int err = get_version(osdmap.epoch+1, bl);
     assert(err == 0);
     
@@ -125,7 +139,7 @@ void OSDMonitor::update_from_paxos()
   }
 
   // save latest
-  paxos->stash_latest(paxosv, bl);
+  paxos->stash_latest(version, bl);
 
   // populate down -> out map
   for (int o = 0; o < osdmap.get_max_osd(); o++)
