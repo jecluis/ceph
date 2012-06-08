@@ -91,13 +91,14 @@ void OSDMonitor::update_from_paxos()
   dout(15) << "update_from_paxos paxos e " << version
 	   << ", my e " << osdmap.epoch << dendl;
 
+
   /* We no longer have stashed versions. Maybe we can do this by reading
    * from a full map? Maybe we should keep the last full map version on a key
    * as well (say, osdmap_full_version), and consider that the last_committed
    * always contains incrementals, and maybe a full version if
    * osdmap_full_version == last_committed
    *
-   * This ^^^^ sounds about right. Do it. We shoud then change the
+   * This ^^^^ sounds about right. Do it. We should then change the
    * 'get_stashed_version()' to 'get_full_version(version_t ver)', which should
    * then be read iif
    *	(osdmap.epoch != osd_full_version)
@@ -110,8 +111,18 @@ void OSDMonitor::update_from_paxos()
     dout(7) << "update_from_paxos loading latest full map e" << v << dendl;
     osdmap.decode(latest);
   }
-  */
-  
+  */ 
+
+  version_t latest_full = get_version("full", "latest");
+  if ((latest_full > 0) && (latest_full != osdmap.epoch)) {
+    bufferlist latest_bl;
+    get_version("full", latest_full, latest_bl);
+    assert(latest_bl.length() != 0);
+    dout(7) << __func__ << " loading latest full map e" << latest_full << dendl;
+    osdmap.decode(latest_bl);
+  }
+
+
   // walk through incrementals
   bufferlist bl;
   while (version > osdmap.epoch) {
@@ -128,6 +139,7 @@ void OSDMonitor::update_from_paxos()
     bl.clear();
     osdmap.encode(bl);
     put_version(&t, "full", osdmap.epoch, bl);
+    put_version(&t, "full", "latest", osdmap.epoch);
 
     // share
     dout(1) << osdmap << dendl;
@@ -135,11 +147,15 @@ void OSDMonitor::update_from_paxos()
     if (osdmap.epoch == 1)
       erase_mkfs(&t);
 
-    mon->store->apply_transaction(&t);
+    mon->store->apply_transaction(t);
   }
 
+  /* We have created our own latest full map during the previous loop (if we
+   * got do go loop at all), and it is under ("full",ver), and
+   * ("full","latest") points to it.
+   */
   // save latest
-  paxos->stash_latest(version, bl);
+  //paxos->stash_latest(version, bl);
 
   // populate down -> out map
   for (int o = 0; o < osdmap.get_max_osd(); o++)
@@ -417,7 +433,8 @@ void OSDMonitor::encode_pending(MonitorDBStore::Transaction *t)
 
   bufferlist osdmap_bl;
   osdmap.encode(osdmap_bl);
-  put_version(t, "full", pending_inc.epoch, osdmap_bl); 
+  put_version(t, "full", pending_inc.epoch, osdmap_bl);
+  put_version(t, "full", "latest", pending_inc.epoch);
 }
 
 
@@ -1144,22 +1161,24 @@ MOSDMap *OSDMonitor::build_incremental(epoch_t from, epoch_t to)
   m->oldest_map = get_first_committed();
   m->newest_map = osdmap.get_epoch();
 
-  for (epoch_t e = to;
-       e >= from && e > 0;
-       e--) {
+  for (epoch_t e = to; e >= from && e > 0; e--) {
     bufferlist bl;
-    if (get_version(e, bl) > 0) {
+    get_version(e, bl);
+    if (bl.length() > 0) {
+      // if (get_version(e, bl) > 0) {
       dout(20) << "build_incremental    inc " << e << " "
 	       << bl.length() << " bytes" << dendl;
       m->incremental_maps[e] = bl;
-    }
-    else if (get_version("full", e, bl) > 0) {
+    } else {
+      get_version("full", e, bl);
+      if (bl.length() > 0) {
+      //else if (get_version("full", e, bl) > 0) {
       dout(20) << "build_incremental   full " << e << " "
 	       << bl.length() << " bytes" << dendl;
       m->maps[e] = bl;
-    }
-    else {
-      assert(0);  // we should have all maps.
+      } else {
+	assert(0);  // we should have all maps.
+      }
     }
   }
   return m;
@@ -1171,6 +1190,13 @@ void OSDMonitor::send_full(PaxosServiceMessage *m)
   mon->send_reply(m, build_latest_full());
 }
 
+/* TBH, I'm fairly certain these two functions could somehow be using a single
+ * helper function to do the heavy lifting. As this is not our main focus right
+ * now, I'm leaving it to the next near-future iteration over the services'
+ * code. We should not forget it though.
+ *
+ * TODO: create a helper function and get rid of the duplicated code.
+ */
 void OSDMonitor::send_incremental(PaxosServiceMessage *req, epoch_t first)
 {
   dout(5) << "send_incremental [" << first << ".." << osdmap.get_epoch() << "]"
@@ -1184,7 +1210,7 @@ void OSDMonitor::send_incremental(PaxosServiceMessage *req, epoch_t first)
 	     << first << " " << bl.length() << " bytes" << dendl;
 
     MOSDMap *m = new MOSDMap(osdmap.get_fsid());
-    m->oldest_map = get_first_committed();
+    m->oldest_map = first;
     m->newest_map = osdmap.get_epoch();
     m->maps[first] = bl;
     mon->send_reply(req, m);
@@ -1214,7 +1240,7 @@ void OSDMonitor::send_incremental(epoch_t first, entity_inst_t& dest, bool oneti
 	     << first << " " << bl.length() << " bytes" << dendl;
 
     MOSDMap *m = new MOSDMap(osdmap.get_fsid());
-    m->oldest_map = get_first_committed();
+    m->oldest_map = first;
     m->newest_map = osdmap.get_epoch();
     m->maps[first] = bl;
     mon->messenger->send_message(m, dest);
@@ -1340,7 +1366,7 @@ void OSDMonitor::tick()
   }
 
   //if map full setting has changed, get that info out there!
-  if (mon->pgmon()->paxos->is_readable()) {
+  if (mon->pgmon()->is_readable()) {
     if (!mon->pgmon()->pg_map.full_osds.empty()) {
       dout(5) << "There are full osds, setting full flag" << dendl;
       add_flag(CEPH_OSDMAP_FULL);
@@ -1382,7 +1408,7 @@ void OSDMonitor::tick()
       !pending_inc.new_pg_temp.empty())  // also propose if we adjusted pg_temp
     propose_pending();
 
-  if (mon->pgmon()->paxos->is_readable() &&
+  if (mon->pgmon()->is_readable() &&
       mon->pgmon()->pg_map.creating_pgs.empty()) {
     epoch_t floor = mon->pgmon()->pg_map.calc_min_last_epoch_clean();
     dout(10) << " min_last_epoch_clean " << floor << dendl;
@@ -1393,9 +1419,40 @@ void OSDMonitor::tick()
       else
 	floor = 0;
     }
-    if (floor > paxos->get_first_committed())
-      paxos->trim_to(floor);
+    if (floor > get_first_committed())
+      trim_to(floor); // we are now responsible for trimming our own versions.
   }    
+}
+
+/* I wonder if we should make Paxos do this thing. I don't see any reason why
+ * we should, but I still wonder... -JL
+ */
+void OSDMonitor::trim_to(version_t first, bool force)
+{
+  version_t first_committed = get_first_committed();
+  version_t latest_full = get_version("full", "latest");
+
+  dout(10) << __func__ << first << " (was " << first_committed<< ")"
+	  << ", latest full " << latest_full << dendl;
+
+  if (first_committed >= first)
+    return;
+
+  MonitorDBStore::Transaction t;
+  while ((first_committed < first) 
+      && (force || (first_committed < latest_full))) {
+    dout(10) << __func__ << first_committed << dendl;
+    t.erase(get_service_name(), first_committed);
+
+    string full_key = mon->store->combine_strings("full", first_committed);
+    if (mon->store->exists(get_service_name(), full_key))
+      t.erase(get_service_name(), full_key);
+
+    first_committed++;
+  }
+  put_first_committed(&t, first_committed);
+
+  mon->store->apply_transaction(t);
 }
 
 
@@ -1490,7 +1547,7 @@ bool OSDMonitor::preprocess_command(MMonCommand *m)
       (!session->caps.get_allow_all() &&
        !session->caps.check_privileges(PAXOS_OSDMAP, MON_CAP_R) &&
        !mon->_allowed_command(session, m->cmd))) {
-    mon->reply_command(m, -EACCES, "access denied", rdata, paxos->get_version());
+    mon->reply_command(m, -EACCES, "access denied", rdata, get_version());
     return true;
   }
 
