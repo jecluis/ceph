@@ -12,9 +12,10 @@
  * 
  */
 
+#include <sstream>
 #include "Paxos.h"
 #include "Monitor.h"
-#include "MonitorMonitorDBStore.h"
+#include "MonitorDBStore.h"
 
 #include "messages/MMonPaxos.h"
 
@@ -24,7 +25,7 @@
 #undef dout_prefix
 #define dout_prefix _prefix(_dout, mon, mon->name, mon->rank, paxos_name, state, first_committed, last_committed)
 static ostream& _prefix(std::ostream *_dout, Monitor *mon, const string& name,
-		        int rank, const char *paxos_name, int state,
+		        int rank, const string& paxos_name, int state,
 			version_t first_committed, version_t last_committed)
 {
   return *_dout << "mon." << name << "@" << rank
@@ -128,7 +129,7 @@ void Paxos::handle_collect(MMonPaxos *collect)
 	     << accepted_pn_from << dendl;
   
     MonitorDBStore::Transaction t;
-    t->put(get_name(), "accepted_pn", accepted_pn);
+    t.put(get_name(), "accepted_pn", accepted_pn);
     get_store()->apply_transaction(t);
   } else {
     // don't accept!
@@ -388,7 +389,7 @@ void Paxos::begin(bufferlist& v)
   // store the proposed value in the store. IF it is accepted, we will then
   // have to decode it into a transaction and apply it.
   MonitorDBStore::Transaction t;
-  t->put(get_name(), last_committed+1, new_value);
+  t.put(get_name(), last_committed+1, new_value);
   get_store()->apply_transaction(t);
 
   if (mon->get_quorum().size() == 1) {
@@ -447,7 +448,7 @@ void Paxos::handle_begin(MMonPaxos *begin)
   // store the accepted value onto our store. We will have to decode it and
   // apply its transaction once we receive permission to commit.
   MonitorDBStore::Transaction t;
-  t->put(get_name(), v, begin->values[v]);
+  t.put(get_name(), v, begin->values[v]);
   get_store()->apply_transaction(t);
   
   // reply
@@ -1008,6 +1009,7 @@ bool Paxos::propose_new_value(bufferlist& bl, Context *oncommit)
   return true;
 }
 
+#if 0
 void Paxos::stash_latest(MonitorDBStore::Transaction *t, 
 			 version_t v, bufferlist& bl)
 {
@@ -1033,6 +1035,7 @@ void Paxos::stash_latest(version_t v, bufferlist& bl)
   if (!t.empty())
     get_store()->apply_transaction(t);
 }
+#endif
 
 version_t Paxos::get_stashed(bufferlist& bl)
 {

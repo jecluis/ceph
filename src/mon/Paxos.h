@@ -119,7 +119,7 @@ e 12v
 
 #include "common/Timer.h"
 
-#include "os/ObjectStore.h"
+#include "MonitorDBStore.h"
 
 class Monitor;
 class MMonPaxos;
@@ -148,7 +148,8 @@ class Paxos {
   Monitor *mon;
 
   // my state machine info
-  const string *paxos_name;
+  const string paxos_name;
+  int machine_id;
 
   friend class Monitor;
   friend class PaxosService;
@@ -906,6 +907,7 @@ public:
   Paxos(Monitor *m, const string name) 
 		 : mon(m),
 		   paxos_name(name),
+		   machine_id(PAXOS_MONITOR),
 		   state(STATE_RECOVERING),
 		   first_committed(0),
 		   last_pn(0),
@@ -1001,7 +1003,8 @@ public:
   void decode_append_transaction(MonitorDBStore::Transaction& t,
 				 bufferlist& bl) {
     MonitorDBStore::Transaction vt;
-    vt.decode(bl.begin());
+    bufferlist::iterator it = bl.begin();
+    vt.decode(it);
     t.append(vt);
   }
 
@@ -1031,7 +1034,16 @@ public:
    * @param force If specified, we may even erase the latest stashed version
    *		  iif @p first is higher than that version.
    */
-  void trim_to(ObjectStore::Transaction *t, version_t first, bool force=false);
+  void trim_to(version_t first, bool force = false);
+  /**
+   * Erase old states from stable storage.
+   *
+   * @param t A transaction
+   * @param first The version we are trimming to
+   * @param force If specified, we may even erase the latest stashed version
+   *		  iif @p first is higher than that version.
+   */
+  void trim_to(MonitorDBStore::Transaction *t, version_t first, bool force=false);
  
   /**
    * @defgroup Paxos_h_slurping_funcs Slurping-related functions
