@@ -507,7 +507,7 @@ public:
    * @param bl A bufferlist containing the version's value
    */
   void put_version(MonitorDBStore::Transaction *t, 
-		   string prefix, version_t ver, bufferlist& bl);
+		   const string& prefix, version_t ver, bufferlist& bl);
   /**
    * Put a version number into a key composed by @p prefix and @p name
    * combined.
@@ -517,9 +517,34 @@ public:
    * @param ver A version number
    */
   void put_version(MonitorDBStore::Transaction *t,
-		   string prefix, string name, version_t ver) {
+		   const string& prefix, const string& name, version_t ver) {
     string key = mon->store->combine_strings(prefix, name);
     t->put(get_service_name(), key, ver);
+  }
+  /**
+   * Put the contents of @p bl into the key @p key.
+   *
+   * @param t A transaction to which we will add this put operation
+   * @param key The key to which we will add the value
+   * @param bl A bufferlist containing the value
+   */
+  void put_value(MonitorDBStore::Transaction *t,
+		 const string& key, bufferlist& bl) {
+    t->put(get_service_name(), key, bl);
+  }
+  /**
+   * Put the contents of @p bl into a key composed of @p prefix and @p name
+   * concatenated.
+   *
+   * @param t A transaction to which we will add this put operation
+   * @param prefix The key's prefix
+   * @param name The key's suffix
+   * @param bl A bufferlist containing the value
+   */
+  void put_value(MonitorDBStore::Transaction *t,
+		 const string& prefix, const string& name, bufferlist& bl) {
+    string key = mon->store->combine_strings(prefix, name);
+    t->put(get_service_name(), key, bl);
   }
   /**
    * Remove our mkfs entry from the store
@@ -580,7 +605,7 @@ public:
    * @param bl The bufferlist to be populated
    * @return 0 on success; <0 otherwise
    */
-  int get_version(string prefix, version_t ver, bufferlist& bl);
+  int get_version(const string& prefix, version_t ver, bufferlist& bl);
   /**
    * Get a version number from a given key, whose name is composed by
    * @p prefix and @p name combined.
@@ -589,9 +614,29 @@ public:
    * @param name Key's suffix
    * @returns A version number
    */
-  version_t get_version(string prefix, string name) {
+  version_t get_version(const string& prefix, const string& name) {
     string key = mon->store->combine_strings(prefix, name);
     return mon->store->get(get_service_name(), key);
+  }
+  /**
+   * Get a value from a given key, composed by @p prefix and @p name combined.
+   *
+   * @param[in] prefix Key's prefix
+   * @param[in] name Key's suffix
+   * @param[out] bl The bufferlist to be populated with the value
+   */
+  int get_value(const string& prefix, const string& name, bufferlist& bl) {
+    string key = mon->store->combine_strings(prefix, name);
+    return mon->store->get(get_service_name(), key, bl);
+  }
+  /**
+   * Get a value from a given key.
+   *
+   * @param[in] key The key
+   * @param[out] bl The bufferlist to be populated with the value
+   */
+  int get_value(const string& key, bufferlist& bl) {
+    return mon->store->get(get_service_name(), key, bl);
   }
   /**
    * Get the contents of our mkfs entry
