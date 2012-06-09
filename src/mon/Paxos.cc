@@ -35,7 +35,10 @@ static ostream& _prefix(std::ostream *_dout, Monitor *mon, const string& name,
 		<< ") ";
 }
 
-
+MonitorDBStore *Paxos::get_store()
+{
+  return mon->store;
+}
 
 void Paxos::init()
 {

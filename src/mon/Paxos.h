@@ -1209,9 +1209,8 @@ public:
    * @}
    */
  protected:
-  virtual MonitorDBStore *get_store() = 0;
+  MonitorDBStore *get_store();
 };
-
 
 #endif
 
