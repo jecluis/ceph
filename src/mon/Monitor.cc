@@ -258,7 +258,7 @@ int Monitor::init()
   // open compatset
   {
     bufferlist bl;
-    store->get(monitor_db_prefix, COMPAT_SET_LOC, bl);
+    store->get(MONITOR_NAME, COMPAT_SET_LOC, bl);
     if (bl.length()) {
       bufferlist::iterator p = bl.begin();
       ::decode(features, p);
@@ -269,7 +269,7 @@ int Monitor::init()
   }
 
   // have we ever joined a quorum?
-  has_ever_joined = (store->get(monitor_db_prefix, "joined") != 0);
+  has_ever_joined = (store->get(MONITOR_NAME, "joined") != 0);
   dout(10) << "has_ever_joined = " << (int)has_ever_joined << dendl;
 
   if (!has_ever_joined) {
