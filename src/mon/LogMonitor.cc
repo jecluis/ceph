@@ -103,19 +103,10 @@ void LogMonitor::update_from_paxos()
   bufferlist blogerr;
   bufferlist blogsec;
 
-  /*
-  if (summary.version != paxos->get_stashed_version()) {
-    bufferlist latest;
-    version_t v = paxos->get_stashed(latest);
-    dout(7) << "update_from_paxos loading summary e" << v << dendl;
-    bufferlist::iterator p = latest.begin();
-    ::decode(summary, p);
-  }
-  */
-  version_t latest_full = get_version("full", "latest");
+  version_t latest_full = get_version_latest_full();
   if ((latest_full > 0) && (summary.version != latest_full)) {
       bufferlist latest_bl;
-      get_version("full", latest_full, latest_bl);
+      get_version_full(latest_full, latest_bl);
       assert(latest_bl.length() != 0);
       dout(7) << __func__ << " loading summary e" << latest_full << dendl;
       bufferlist::iterator p = latest_bl.begin();
@@ -160,13 +151,7 @@ void LogMonitor::update_from_paxos()
     summary.version++;
   }
 
-  bufferlist bl;
-  ::encode(summary, bl);
   MonitorDBStore::Transaction t;
-  put_version(&t, "full", version, bl);
-  put_version(&t, "full", "latest", version);
-
-//  paxos->stash_latest(version, bl);
 
   if (blog.length())
     store_do_append(&t, "log", blog);
@@ -180,6 +165,8 @@ void LogMonitor::update_from_paxos()
     store_do_append(&t, "log.warn", blogwarn);
   if (blogerr.length())
     store_do_append(&t, "log.err", blogerr);
+  if (!t.empty())
+    mon->store->apply_transaction(t);
 
 
   // trim
@@ -201,33 +188,6 @@ void LogMonitor::store_do_append(MonitorDBStore::Transaction *t,
   put_value(t, key, existing_bl);
 }
 
-void LogMonitor::trim_to(version_t first, bool force)
-{
-  version_t first_committed = get_first_committed();
-  version_t latest_full = get_version("full", "latest");
-
-  dout(10) << __func__ << first << " (was " << first_committed << ")"
-	   << ", latest full " << latest_full << dendl;
-
-  if (first_committed >= first)
-    return;
-
-  MonitorDBStore::Transaction t;
-  while ((first_committed < first)
-      && (force || (first_committed < latest_full))) {
-    dout(10) << __func__ << first_committed << dendl;
-    t.erase(get_service_name(), first_committed);
-
-    string full_key = mon->store->combine_strings("full", first_committed);
-    if (mon->store->exists(get_service_name(), full_key))
-      t.erase(get_service_name(), full_key);
-
-    first_committed ++;
-  }
-  put_first_committed(&t, first_committed);
-  mon->store->apply_transaction(t);
-}
-
 void LogMonitor::create_pending()
 {
   pending_log.clear();
@@ -237,16 +197,23 @@ void LogMonitor::create_pending()
 
 void LogMonitor::encode_pending(MonitorDBStore::Transaction *t)
 {
+  version_t version = get_version() + 1;
   bufferlist bl;
-  dout(10) << "encode_pending v " << (get_version() + 1) << dendl;
+  dout(10) << __func__ << " v" << version << dendl;
   __u8 v = 1;
   ::encode(v, bl);
   multimap<utime_t,LogEntry>::iterator p;
   for (p = pending_log.begin(); p != pending_log.end(); p++)
     p->second.encode(bl);
 
-  put_version(t, get_version()+1, bl);
-  put_last_committed(t, get_version()+1);
+  bufferlist summary_bl;
+  ::encode(summary, summary_bl);
+
+  put_version(t, version, bl);
+  put_last_committed(t, version);
+
+  put_version_full(t, version, bl);
+  put_version_latest_full(t, version);
 }
 
 bool LogMonitor::preprocess_query(PaxosServiceMessage *m)

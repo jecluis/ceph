@@ -62,7 +62,6 @@ private:
 
   void store_do_append(MonitorDBStore::Transaction *t,
 		       const string& key, bufferlist& bl);
-  void trim_to(version_t first, bool force = false);
 
  public:
   LogMonitor(Monitor *mn, Paxos *p, const string& service_name) 
