@@ -96,15 +96,8 @@ void MDSMonitor::update_from_paxos()
   mdsmap_bl.clear();
   get_version(version, mdsmap_bl);
   assert(mdsmap_bl.length() > 0);
-  dout(10) << "update_from_paxos  got " << version << dendl;
+  dout(10) << __func__ << " got " << version << dendl;
   mdsmap.decode(mdsmap_bl);
-
-  // save as 'latest', too.
-  /*
-  MonitorDBStore::Transaction t;
-  t.put(get_service_name(), "latest", mdsmap_bl);
-  mon->store->apply_transaction(t);
-  */
 
   // new map
   dout(4) << "new map" << dendl;
