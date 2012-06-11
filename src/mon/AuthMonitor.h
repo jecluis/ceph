@@ -140,9 +140,6 @@ private:
   void tick();  // check state, take actions
 
   void init();
-
- protected:
-  void trim_to(version_t first, bool force = false);
 };
 
 

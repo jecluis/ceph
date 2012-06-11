@@ -118,19 +118,19 @@ void AuthMonitor::update_from_paxos()
     return;
   assert(version >= keys_ver);
 
-  /*
-  if (keys_ver != paxos->get_stashed_version()) {
-    bufferlist latest;
-    keys_ver = paxos->get_stashed(latest);
-    dout(7) << "update_from_paxos loading summary e" << keys_ver << dendl;
-    bufferlist::iterator p = latest.begin();
+  version_t latest_full = get_version_latest_full();
+  if ((latest_full > 0) && (latest_full > keys_ver)) {
+    bufferlist latest_bl;
+    int err = get_version_full(latest_full, latest_bl);
+    assert(err == 0);
+    dout(7) << __func__ << " loading summary e" << keys_ver << dendl;
+    bufferlist::iterator p = latest_bl.begin();
     __u8 struct_v;
     ::decode(struct_v, p);
     ::decode(max_global_id, p);
     ::decode(mon->key_server, p);
     mon->key_server.set_ver(keys_ver);
   }
-  */
 
   // walk through incrementals
   while (version > keys_ver) {
@@ -197,41 +197,6 @@ void AuthMonitor::update_from_paxos()
     trim_to(version - max);
 }
 
-/* TODO: This is going to the PaxosService, as it is shared by most services,
- *	 and this version is generic enough to suit them all.
- */
-void AuthMonitor::trim_to(version_t first, bool force)
-{
-  version_t first_committed = get_first_committed();
-  version_t latest_full = get_version("full", "latest");
-
-  string latest_key = mon->store->combine_strings("full", latest_full);
-  bool has_full = mon->store->exists(get_service_name(), latest_key);
-
-  dout(10) << __func__ << " " << first << " (was " << first_committed << ")"
-	   << ", latest full " << latest_full << dendl;
-
-  if (first_committed >= first)
-    return;
-
-  MonitorDBStore::Transaction t;
-  while ((first_committed < first)
-      && (force || (first_committed < latest_full))) {
-    dout(20) << __func__ << first_committed << dendl;
-    t.erase(get_service_name(), first_committed);
-
-    if (has_full) {
-      latest_key = mon->store->combine_strings("full", first_committed);
-      if (mon->store->exists(get_service_name(), latest_key))
-	t.erase(get_service_name(), latest_key);
-    }
-
-    first_committed++;
-  }
-  put_first_committed(&t, first_committed);
-  mon->store->apply_transaction(t);
-}
-
 void AuthMonitor::increase_max_global_id()
 {
   assert(mon->is_leader());
@@ -277,8 +242,8 @@ void AuthMonitor::encode_pending(MonitorDBStore::Transaction *t)
   version_t version = get_version() + 1;
   put_version(t, version, bl);
   put_last_committed(t, version);
-  put_version(t, "full", version, full_bl);
-  put_version(t, "full", "latest", version);
+  put_version_full(t, version, full_bl);
+  put_version_latest_full(t, version);
 }
 
 bool AuthMonitor::preprocess_query(PaxosServiceMessage *m)
