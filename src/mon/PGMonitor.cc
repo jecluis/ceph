@@ -143,10 +143,10 @@ void PGMonitor::update_from_paxos()
   /* Obtain latest full pgmap version, if available and whose version is
    * greater than the current pgmap's version.
    */
-  version_t latest_full = get_version("full", "latest");
+  version_t latest_full = get_version_latest_full();
   if ((latest_full > 0) && (latest_full > pg_map.version)) {
     bufferlist latest_bl;
-    int err = get_version("full", latest_full, latest_bl);
+    int err = get_version_full(latest_full, latest_bl);
     assert(err == 0);
     dout(7) << __func__ << " loading latest full pgmap v"
 	    << latest_full << dendl;
@@ -265,8 +265,8 @@ void PGMonitor::encode_pending(MonitorDBStore::Transaction *t)
   put_version(t, version, bl);
   put_last_committed(t, version);
 
-  put_version(t, "full", version, full_bl);
-  put_version(t, "full", "latest", version);
+  put_version_full(t, version, full_bl);
+  put_version_latest_full(t, version);
 }
 
 bool PGMonitor::preprocess_query(PaxosServiceMessage *m)
