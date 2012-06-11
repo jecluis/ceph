@@ -104,24 +104,14 @@ void OSDMonitor::update_from_paxos()
    *	(osdmap.epoch != osd_full_version)
    *	&& (osdmap.epoch <= osdmap_full_version)
    */
-  /*
-  if (osdmap.epoch != get_stashed_version()) {
-    bufferlist latest;
-    version_t v = get_stashed(latest);
-    dout(7) << "update_from_paxos loading latest full map e" << v << dendl;
-    osdmap.decode(latest);
-  }
-  */ 
-
-  version_t latest_full = get_version("full", "latest");
-  if ((latest_full > 0) && (latest_full != osdmap.epoch)) {
+  version_t latest_full = get_version_latest_full();
+  if ((latest_full > 0) && (latest_full > osdmap.epoch)) {
     bufferlist latest_bl;
-    get_version("full", latest_full, latest_bl);
+    get_version_full(latest_full, latest_bl);
     assert(latest_bl.length() != 0);
     dout(7) << __func__ << " loading latest full map e" << latest_full << dendl;
     osdmap.decode(latest_bl);
   }
-
 
   // walk through incrementals
   bufferlist bl;
@@ -133,29 +123,15 @@ void OSDMonitor::update_from_paxos()
     OSDMap::Incremental inc(bl);
     osdmap.apply_incremental(inc);
 
-    MonitorDBStore::Transaction t;
-
-    // write out the full map for all past epochs
-    bl.clear();
-    osdmap.encode(bl);
-    put_version(&t, "full", osdmap.epoch, bl);
-    put_version(&t, "full", "latest", osdmap.epoch);
-
     // share
     dout(1) << osdmap << dendl;
 
-    if (osdmap.epoch == 1)
+    if (osdmap.epoch == 1) {
+      MonitorDBStore::Transaction t;
       erase_mkfs(&t);
-
-    mon->store->apply_transaction(t);
+      mon->store->apply_transaction(t);
+    }
   }
-
-  /* We have created our own latest full map during the previous loop (if we
-   * got do go loop at all), and it is under ("full",ver), and
-   * ("full","latest") points to it.
-   */
-  // save latest
-  //paxos->stash_latest(version, bl);
 
   // populate down -> out map
   for (int o = 0; o < osdmap.get_max_osd(); o++)
@@ -433,8 +409,8 @@ void OSDMonitor::encode_pending(MonitorDBStore::Transaction *t)
 
   bufferlist osdmap_bl;
   osdmap.encode(osdmap_bl);
-  put_version(t, "full", pending_inc.epoch, osdmap_bl);
-  put_version(t, "full", "latest", pending_inc.epoch);
+  put_version_full(t, pending_inc.epoch, osdmap_bl);
+  put_version_latest_full(t, pending_inc.epoch);
 }
 
 
@@ -1423,38 +1399,6 @@ void OSDMonitor::tick()
       trim_to(floor); // we are now responsible for trimming our own versions.
   }    
 }
-
-/* I wonder if we should make Paxos do this thing. I don't see any reason why
- * we should, but I still wonder... -JL
- */
-void OSDMonitor::trim_to(version_t first, bool force)
-{
-  version_t first_committed = get_first_committed();
-  version_t latest_full = get_version("full", "latest");
-
-  dout(10) << __func__ << first << " (was " << first_committed<< ")"
-	  << ", latest full " << latest_full << dendl;
-
-  if (first_committed >= first)
-    return;
-
-  MonitorDBStore::Transaction t;
-  while ((first_committed < first) 
-      && (force || (first_committed < latest_full))) {
-    dout(10) << __func__ << first_committed << dendl;
-    t.erase(get_service_name(), first_committed);
-
-    string full_key = mon->store->combine_strings("full", first_committed);
-    if (mon->store->exists(get_service_name(), full_key))
-      t.erase(get_service_name(), full_key);
-
-    first_committed++;
-  }
-  put_first_committed(&t, first_committed);
-
-  mon->store->apply_transaction(t);
-}
-
 
 void OSDMonitor::handle_osd_timeouts(const utime_t &now,
 				     std::map<int,utime_t> &last_osd_report)

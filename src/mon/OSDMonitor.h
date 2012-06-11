@@ -213,8 +213,6 @@ private:
       pending_inc.new_flags &= ~flag;
     }
   }
-
-  void trim_to(version_t first, bool force = false);
 };
 
 #endif
