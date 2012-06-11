@@ -451,7 +451,7 @@ public:
    *		  expected behavior is that, when 'true', we will remove all
    *		  the log versions even if we don't have a full map in store.
    */
-  virtual void trim_to(version_t first, bool force = false) = 0;
+  void trim_to(version_t first, bool force = false);
 
 
   /**

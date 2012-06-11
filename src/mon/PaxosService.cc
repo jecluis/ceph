@@ -221,3 +221,35 @@ int PaxosService::get_version(string prefix, version_t ver, bufferlist& bl)
   return mon->store->get(get_service_name(), key, bl);
 }
 
+
+void PaxosService::trim_to(version_t first, bool force)
+{
+  version_t first_committed = get_first_committed();
+  version_t latest_full = get_version("full", "latest");
+
+  string latest_key = mon->store->combine_strings("full", latest_full);
+  bool has_full = mon->store->exists(get_service_name(), latest_key);
+
+  dout(10) << __func__ << " " << first << " (was " << first_committed << ")"
+	   << ", latest full " << latest_full << dendl;
+
+  if (first_committed >= first)
+    return;
+
+  MonitorDBStore::Transaction t;
+  while ((first_committed < first)
+      && (force || (first_committed < latest_full))) {
+    dout(20) << __func__ << first_committed << dendl;
+    t.erase(get_service_name(), first_committed);
+
+    if (has_full) {
+      latest_key = mon->store->combine_strings("full", first_committed);
+      if (mon->store->exists(get_service_name(), latest_key))
+	t.erase(get_service_name(), latest_key);
+    }
+
+    first_committed++;
+  }
+  put_first_committed(&t, first_committed);
+  mon->store->apply_transaction(t);
+}
