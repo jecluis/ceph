@@ -146,7 +146,8 @@ public:
       last_committed_name("last_committed"),
       first_committed_name("first_committed"),
       last_accepted_name("last_accepted"),
-      mkfs_name("mkfs") { }
+      mkfs_name("mkfs"),
+      full_version_name("full"), full_latest_name("latest") { }
 
   virtual ~PaxosService() {}
 
@@ -370,6 +371,8 @@ public:
   const string first_committed_name;
   const string last_accepted_name;
   const string mkfs_name;
+  const string full_version_name;
+  const string full_latest_name;
   /**
    * @}
    */
@@ -510,6 +513,7 @@ public:
    * Put a version number into a key composed by @p prefix and @p name
    * combined.
    *
+   * @param t The transaction to which we will add this put operation
    * @param prefix The key's prefix
    * @param name The key's suffix
    * @param ver A version number
@@ -517,6 +521,31 @@ public:
   void put_version(MonitorDBStore::Transaction *t,
 		   const string& prefix, const string& name, version_t ver) {
     string key = mon->store->combine_strings(prefix, name);
+    t->put(get_service_name(), key, ver);
+  }
+  /**
+   * Put the contents of @p bl into a full version key for this service, that
+   * will be created with @p ver in mind.
+   *
+   * @param t The transaction to which we will add this put operation
+   * @param ver A version number
+   * @param bl A bufferlist containing the version's value
+   */
+  void put_version_full(MonitorDBStore::Transaction *t,
+			version_t ver, bufferlist& bl) {
+    string key = mon->store->combine_strings(full_version_name, ver);
+    t->put(get_service_name(), key, bl);
+  }
+  /**
+   * Put the version number in @p ver into the key pointing to the latest full
+   * version of this service.
+   *
+   * @param t The transaction to which we will add this put operation
+   * @param ver A version number
+   */
+  void put_version_latest_full(MonitorDBStore::Transaction *t, version_t ver) {
+    string key =
+      mon->store->combine_strings(full_version_name, full_latest_name);
     t->put(get_service_name(), key, ver);
   }
   /**
@@ -615,6 +644,25 @@ public:
   version_t get_version(const string& prefix, const string& name) {
     string key = mon->store->combine_strings(prefix, name);
     return mon->store->get(get_service_name(), key);
+  }
+  /**
+   * Get the contents of a given full version of this service.
+   *
+   * @param ver A version number
+   * @param bl The bufferlist to be populated
+   * @returns 0 on success; <0 otherwise
+   */
+  int get_version_full(version_t ver, bufferlist& bl) {
+    string key = mon->store->combine_strings(full_version_name, ver);
+    return mon->store->get(get_service_name(), key, bl);
+  }
+  /**
+   * Get the latest full version number
+   *
+   * @returns A version number
+   */
+  version_t get_version_latest_full() {
+    return get_version(full_version_name, full_latest_name);
   }
   /**
    * Get a value from a given key, composed by @p prefix and @p name combined.
