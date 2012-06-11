@@ -436,8 +436,6 @@ public:
     return paxos->is_writeable();
   }
 
- protected:
-
   /**
    * Trim our log. This implies getting rid of versions on the k/v store.
    * Services implementing us don't have to implement this function if they
