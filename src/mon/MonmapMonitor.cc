@@ -73,16 +73,23 @@ void MonmapMonitor::update_from_paxos()
    * store and create stashed versions to handle inconsistencies that are
    * addressed by our MonitorDBStore.
    *
-  version_t orig_latest = paxos->get_stashed_version();
-  bool need_restart = version != mon->monmap->get_epoch();  
-  
-  if (version > 0 && (mon->monmap->get_epoch() == 0 ||
-		     paxos->get_stashed_version() != version)) {
-    bufferlist latest;
-    version_t v = paxos->get_stashed(latest);
-    if (v) {
-      mon->monmap->decode(latest);
-    }
+   * NOTE: this is not entirely true for the remaining services. In this one,
+   * the MonmapMonitor, we don't keep incrementals and each version is a full
+   * monmap. In the remaining services however, we keep mostly incrementals and
+   * we used to stash full versions of each map/summary. We still do it. We
+   * just don't need to do it here. Just check the code below and compare it
+   * with the code further down the line where we 'get' the latest committed
+   * version: it's the same code.
+   *
+  version_t latest_full = get_version_latest_full();
+  if ((latest_full > 0) && (latest_full > mon->monmap->get_epoch())) {
+    bufferlist latest_bl;
+    int err = get_version_full(latest_full, latest_bl);
+    assert(err == 0);
+    dout(7) << __func__ << " loading latest full monmap v"
+	    << latest_full << dendl;
+    if (latest_bl.length() > 0)
+      mon->monmap->decode(latest_bl);
   }
    */
   bool need_restart = version != mon->monmap->get_epoch();  
