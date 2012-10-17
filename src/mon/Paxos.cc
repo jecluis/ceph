@@ -289,6 +289,8 @@ void Paxos::store_state(MMonPaxos *m)
     // update the first and last committed in-memory values.
     first_committed = get_store()->get(get_name(), "first_committed");
     last_committed = get_store()->get(get_name(), "last_committed");
+    dout(30) << __func__ << " new fc " << first_committed
+             << " lc " << last_committed << dendl;
   }
 
   if (get_store()->exists(get_name(), "conversion_first")) {
@@ -624,6 +626,12 @@ void Paxos::commit()
   *_dout << dendl;
 
   get_store()->apply_transaction(t);
+
+  first_committed = get_store()->get(get_name(), "first_committed");
+  last_committed = get_store()->get(get_name(), "last_committed");
+
+  dout(30) << __func__ << " new fc " << first_committed
+           << " lc " << last_committed << dendl;
 
   // tell everyone
   for (set<int>::const_iterator p = mon->get_quorum().begin();

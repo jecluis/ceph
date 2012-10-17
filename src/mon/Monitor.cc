@@ -18,6 +18,9 @@
 #include <signal.h>
 #include <limits.h>
 
+#define TRACEPOINT_DEFINE
+#include "lttng/lttng_mon.h"
+
 #include "Monitor.h"
 #include "common/version.h"
 
@@ -74,6 +77,9 @@
 
 #include "common/config.h"
 #include "include/assert.h"
+
+#define CEPH_LTTNG_ENABLE
+#include "lttng/ceph_lttng.h"
 
 #define dout_subsys ceph_subsys_mon
 #undef dout_prefix
@@ -476,6 +482,9 @@ int Monitor::init()
   r = admin_socket->register_command("sync_status", admin_hook,
 				     "show current synchronization status");
   assert(r == 0);
+  r = admin_socket->register_command("sync_force", admin_hook,
+				     "force a store sync");
+  assert(r == 0);
   r = admin_socket->register_command("add_bootstrap_peer_hint", admin_hook,
 				     "add peer address as potential bootstrap peer for cluster bringup");
   assert(r == 0);
@@ -546,6 +555,7 @@ void Monitor::shutdown()
     admin_socket->unregister_command("mon_status");
     admin_socket->unregister_command("quorum_status");
     admin_socket->unregister_command("sync_status");
+    admin_socket->unregister_command("sync_force");
     delete admin_hook;
     admin_hook = NULL;
   }
@@ -694,6 +704,7 @@ set<string> Monitor::get_sync_targets_names() {
 void Monitor::reset_sync()
 {
   dout(10) << __func__ << dendl;
+  ceph_tp_entry(mon, __func__);
   // clear everything trim/sync related
   {
     map<entity_inst_t,Context*>::iterator iter = trim_timeouts.begin();
@@ -719,6 +730,7 @@ void Monitor::reset_sync()
 
   sync_state = SYNC_STATE_NONE;
   sync_role = SYNC_ROLE_NONE;
+  ceph_tp_exit(mon, __func__);
 }
 
 // leader
@@ -726,14 +738,19 @@ void Monitor::reset_sync()
 void Monitor::sync_send_heartbeat(entity_inst_t &other, bool reply)
 {
   dout(10) << __func__ << " " << other << " reply(" << reply << ")" << dendl;
+  ceph_tp_entry(mon, __func__);
+  ceph_tp(mon, store_sync, __func__);
   uint32_t op = (reply ? MMonSync::OP_HEARTBEAT_REPLY : MMonSync::OP_HEARTBEAT);
   MMonSync *msg = new MMonSync(op);
   messenger->send_message(msg, other);
+  ceph_tp_exit(mon, __func__);
 }
 
 void Monitor::handle_sync_start(MMonSync *m)
 {
   dout(10) << __func__ << " " << *m << dendl;
+  ceph_tp_entry(mon, __func__);
+  ceph_tp(mon, store_sync, __func__);
 
   /* If we are not the leader, then some monitor picked us as the point of
    * entry to the quorum during its synchronization process. Therefore, we
@@ -796,11 +813,14 @@ void Monitor::handle_sync_start(MMonSync *m)
   m->put();
 
   assert(g_conf->mon_sync_leader_kill_at != 2);
+  ceph_tp_exit(mon, __func__);
 }
 
 void Monitor::handle_sync_heartbeat(MMonSync *m)
 {
   dout(10) << __func__ << " " << *m << dendl;
+  ceph_tp_entry(mon, __func__);
+  ceph_tp(mon, store_sync, __func__);
 
   entity_inst_t other = m->get_source_inst();
   if (!(sync_role & SYNC_ROLE_LEADER)
@@ -833,11 +853,14 @@ void Monitor::handle_sync_heartbeat(MMonSync *m)
   assert(g_conf->mon_sync_leader_kill_at != 4);
 
   m->put();
+  ceph_tp_exit(mon, __func__);
 }
 
 void Monitor::sync_finish(entity_inst_t &entity, bool abort)
 {
   dout(10) << __func__ << " entity(" << entity << ")" << dendl;
+  ceph_tp_entry(mon, __func__);
+  ceph_tp(mon, store_sync, __func__);
 
   Mutex::Locker l(trim_lock);
 
@@ -874,11 +897,14 @@ void Monitor::sync_finish(entity_inst_t &entity, bool abort)
     trim_enable_timer = new C_TrimEnable(this);
     timer.add_event_after(30.0, trim_enable_timer);
   }
+  ceph_tp_exit(mon, __func__);
 }
 
 void Monitor::handle_sync_finish(MMonSync *m)
 {
   dout(10) << __func__ << " " << *m << dendl;
+  ceph_tp_entry(mon, __func__);
+  ceph_tp(mon, store_sync, __func__);
 
   entity_inst_t other = m->get_source_inst();
 
@@ -911,6 +937,7 @@ void Monitor::handle_sync_finish(MMonSync *m)
 
   sync_finish(other);
   m->put();
+  ceph_tp_exit(mon, __func__);
 }
 
 // end of leader
@@ -919,6 +946,8 @@ void Monitor::handle_sync_finish(MMonSync *m)
 
 void Monitor::sync_timeout(entity_inst_t &entity)
 {
+  ceph_tp_entry(mon, __func__);
+  ceph_tp(mon, store_sync, __func__);
   if (state == STATE_SYNCHRONIZING) {
     assert(sync_role == SYNC_ROLE_REQUESTER);
     assert(sync_state == SYNC_STATE_CHUNKS);
@@ -935,6 +964,7 @@ void Monitor::sync_timeout(entity_inst_t &entity)
       // Therefore, just abort the whole sync and start off fresh whenever he
       // (or somebody else) comes back.
       sync_requester_abort();
+      ceph_tp_exit(mon, __func__);
       return;
     }
 
@@ -959,6 +989,7 @@ void Monitor::sync_timeout(entity_inst_t &entity)
 	sync_provider->entity = monmap->get_inst(new_mon);
 	sync_state = SYNC_STATE_START;
 	sync_start_chunks(sync_provider);
+	ceph_tp_exit(mon, __func__);
 	return;
       }
     }
@@ -967,14 +998,19 @@ void Monitor::sync_timeout(entity_inst_t &entity)
   } else if (sync_role & SYNC_ROLE_PROVIDER) {
     dout(10) << __func__ << " cleanup " << entity << dendl;
     sync_provider_cleanup(entity);
+    ceph_tp_exit(mon, __func__);
     return;
   } else
     assert(0 == "We should never reach this");
+
+  ceph_tp_exit(mon, __func__);
 }
 
 void Monitor::sync_provider_cleanup(entity_inst_t &entity)
 {
   dout(10) << __func__ << " " << entity << dendl;
+  ceph_tp_entry(mon, __func__);
+  ceph_tp(mon, store_sync, __func__);
   if (sync_entities.count(entity) > 0) {
     sync_entities[entity]->cancel_timeout();
     sync_entities.erase(entity);
@@ -985,11 +1021,14 @@ void Monitor::sync_provider_cleanup(entity_inst_t &entity)
     dout(1) << __func__ << " no longer a sync provider" << dendl;
     sync_role &= ~SYNC_ROLE_PROVIDER;
   }
+  ceph_tp_exit(mon, __func__);
 }
 
 void Monitor::handle_sync_start_chunks(MMonSync *m)
 {
   dout(10) << __func__ << " " << *m << dendl;
+  ceph_tp_entry(mon, __func__);
+  ceph_tp(mon, store_sync, __func__);
 
   entity_inst_t other = m->get_source_inst();
 
@@ -1024,11 +1063,14 @@ void Monitor::handle_sync_start_chunks(MMonSync *m)
 
   sync_send_chunks(sync);
   m->put();
+  ceph_tp_exit(mon, __func__);
 }
 
 void Monitor::handle_sync_chunk_reply(MMonSync *m)
 {
   dout(10) << __func__ << " " << *m << dendl;
+  ceph_tp_entry(mon, __func__);
+  ceph_tp(mon, store_sync, __func__);
 
   entity_inst_t other = m->get_source_inst();
 
@@ -1049,11 +1091,14 @@ void Monitor::handle_sync_chunk_reply(MMonSync *m)
 
   sync_send_chunks(sync_entities[other]);
   m->put();
+  ceph_tp_exit(mon, __func__);
 }
 
 void Monitor::sync_send_chunks(SyncEntity sync)
 {
   dout(10) << __func__ << " entity(" << sync->entity << ")" << dendl;
+  ceph_tp_entry(mon, __func__);
+  ceph_tp(mon, store_sync, __func__);
 
   sync->cancel_timeout();
 
@@ -1092,7 +1137,7 @@ void Monitor::sync_send_chunks(SyncEntity sync)
   if (sync->sync_state == SyncEntityImpl::STATE_PAXOS)
     assert(g_conf->mon_sync_provider_kill_at != 5);
 
-
+  ceph_tp_exit(mon, __func__);
 }
 // end of synchronization provider
 
@@ -1100,7 +1145,9 @@ void Monitor::sync_send_chunks(SyncEntity sync)
 
 void Monitor::sync_requester_abort()
 {
+  ceph_tp_entry(mon, __func__);
   dout(10) << __func__;
+  ceph_tp(mon, store_sync, __func__);
   assert(state == STATE_SYNCHRONIZING);
   assert(sync_role == SYNC_ROLE_REQUESTER);
 
@@ -1133,6 +1180,7 @@ void Monitor::sync_requester_abort()
 
   state = 0;
 
+  ceph_tp_exit(mon, __func__);
   bootstrap();
 }
 
@@ -1147,11 +1195,13 @@ void Monitor::sync_requester_abort()
  */
 void Monitor::sync_start(entity_inst_t &other)
 {
+  ceph_tp_entry(mon, __func__);
   cancel_probe_timeout();
 
   dout(10) << __func__ << " entity( " << other << " )" << dendl;
   if ((state == STATE_SYNCHRONIZING) && (sync_role == SYNC_ROLE_REQUESTER)) {
     dout(1) << __func__ << " already synchronizing; drop it" << dendl;
+    ceph_tp(mon, store_sync_requester, __func__, ceph_lttng_mark_barrier);
     return;
   }
 
@@ -1192,6 +1242,8 @@ void Monitor::sync_start(entity_inst_t &other)
   sync_leader = get_sync_entity(leader, this);
   sync_provider = get_sync_entity(provider, this);
 
+  ceph_tp(mon, store_sync_requester, __func__, ceph_lttng_mark_okay);
+
   // this message may bounce through 'other' (if 'other' is not the leader)
   // in order to reach the leader. Therefore, set a higher timeout to allow
   // breathing room for the reply message to reach us.
@@ -1201,10 +1253,12 @@ void Monitor::sync_start(entity_inst_t &other)
   MMonSync *m = new MMonSync(MMonSync::OP_START);
   messenger->send_message(m, other);
   assert(g_conf->mon_sync_requester_kill_at != 1);
+  ceph_tp_exit(mon, __func__);
 }
 
 void Monitor::sync_start_chunks(SyncEntity provider)
 {
+  ceph_tp_entry(mon, __func__);
   dout(10) << __func__ << " provider(" << provider->entity << ")" << dendl;
 
   assert(sync_role == SYNC_ROLE_REQUESTER);
@@ -1219,14 +1273,19 @@ void Monitor::sync_start_chunks(SyncEntity provider)
   if (!last_key.first.empty() && !last_key.second.empty())
     msg->last_key = last_key;
 
+  ceph_tp(mon, store_sync_requester, __func__, ceph_lttng_mark_okay);
+
   assert(g_conf->mon_sync_requester_kill_at != 4);
   messenger->send_message(msg, provider->entity);
   assert(g_conf->mon_sync_requester_kill_at != 5);
+  ceph_tp_exit(mon, __func__);
 }
 
 void Monitor::sync_start_reply_timeout()
 {
+  ceph_tp_entry(mon, __func__);
   dout(10) << __func__ << dendl;
+  ceph_tp(mon, store_sync, __func__);
 
   assert(state == STATE_SYNCHRONIZING);
   assert(sync_role == SYNC_ROLE_REQUESTER);
@@ -1237,11 +1296,13 @@ void Monitor::sync_start_reply_timeout()
   // waiting for a reply from the Leader, it sure seems like the right path
   // to take.
   sync_requester_abort();
+  ceph_tp_exit(mon, __func__);
 }
 
 void Monitor::handle_sync_start_reply(MMonSync *m)
 {
   dout(10) << __func__ << " " << *m << dendl;
+  ceph_tp_entry(mon, __func__);
 
   entity_inst_t other = m->get_source_inst();
 
@@ -1256,6 +1317,7 @@ void Monitor::handle_sync_start_reply(MMonSync *m)
     // state if that is not the case. Therefore, just drop it and let the
     // timeouts figure it out. Eventually.
     dout(1) << __func__ << " stray message -- drop it." << dendl;
+    ceph_tp(mon, store_sync_requester, __func__, ceph_lttng_mark_barrier);
     goto out;
   }
 
@@ -1273,11 +1335,14 @@ void Monitor::handle_sync_start_reply(MMonSync *m)
     sync_state = SYNC_STATE_NONE;
     sync_leader->set_timeout(new C_SyncStartRetry(this, sync_leader->entity),
 			     g_conf->mon_sync_backoff_timeout);
+    ceph_tp(mon, store_sync_requester, __func__, ceph_lttng_mark_retry);
     goto out;
   }
 
   sync_leader->set_timeout(new C_HeartbeatTimeout(this),
 			   g_conf->mon_sync_heartbeat_timeout);
+
+  ceph_tp(mon, store_sync_requester, __func__, ceph_lttng_mark_okay);
 
   assert(g_conf->mon_sync_requester_kill_at != 2);
   sync_send_heartbeat(sync_leader->entity);
@@ -1286,11 +1351,14 @@ void Monitor::handle_sync_start_reply(MMonSync *m)
   sync_start_chunks(sync_provider);
 out:
   m->put();
+  ceph_tp_exit(mon, __func__);
 }
 
 void Monitor::handle_sync_heartbeat_reply(MMonSync *m)
 {
   dout(10) << __func__ << " " << *m << dendl;
+  ceph_tp_entry(mon, __func__);
+  ceph_tp(mon, store_sync, __func__);
 
   entity_inst_t other = m->get_source_inst();
   if ((sync_role != SYNC_ROLE_REQUESTER)
@@ -1312,11 +1380,13 @@ void Monitor::handle_sync_heartbeat_reply(MMonSync *m)
   sync_leader->cancel_timeout();
   sync_leader->set_timeout(new C_HeartbeatInterval(this, sync_leader->entity),
 			   g_conf->mon_sync_heartbeat_interval);
+  ceph_tp_exit(mon, __func__);
 }
 
 void Monitor::handle_sync_chunk(MMonSync *m)
 {
   dout(10) << __func__ << " " << *m << dendl;
+  ceph_tp_entry(mon, __func__);
 
   entity_inst_t other = m->get_source_inst();
 
@@ -1325,6 +1395,7 @@ void Monitor::handle_sync_chunk(MMonSync *m)
       || (sync_provider.get() == NULL)
       || (other != sync_provider->entity)) {
     dout(1) << __func__ << " stray message -- drop it." << dendl;
+    ceph_tp(mon, store_sync_requester, __func__, ceph_lttng_mark_barrier);
     m->put();
     return;
   }
@@ -1385,13 +1456,17 @@ void Monitor::handle_sync_chunk(MMonSync *m)
     dout(10) << __func__ << " CRC matches" << dendl;
   }
 
+  ceph_tp(mon, store_sync_requester, __func__, ceph_lttng_mark_okay);
+
   m->put();
+  ceph_tp_exit(mon, __func__);
   if (stop)
     sync_stop();
 }
 
 void Monitor::sync_stop()
 {
+  ceph_tp_entry(mon, __func__);
   dout(10) << __func__ << dendl;
 
   assert(sync_role == SYNC_ROLE_REQUESTER);
@@ -1412,22 +1487,30 @@ void Monitor::sync_stop()
   assert(g_conf->mon_sync_requester_kill_at != 9);
   messenger->send_message(msg, leader);
   assert(g_conf->mon_sync_requester_kill_at != 10);
+  ceph_tp(mon, store_sync_requester, __func__, ceph_lttng_mark_okay);
+  ceph_tp_exit(mon, __func__);
 }
 
 void Monitor::sync_finish_reply_timeout()
 {
+  ceph_tp_entry(mon, __func__);
   dout(10) << __func__ << dendl;
   assert(state == STATE_SYNCHRONIZING);
   assert(sync_leader.get() != NULL);
   assert(sync_role == SYNC_ROLE_REQUESTER);
   assert(sync_state == SYNC_STATE_STOP);
 
+  ceph_tp(mon, store_sync_requester, __func__, ceph_lttng_mark_okay);
+
   sync_requester_abort();
+  ceph_tp_exit(mon, __func__);
 }
 
 void Monitor::handle_sync_finish_reply(MMonSync *m)
 {
+  ceph_tp_entry(mon, __func__);
   dout(10) << __func__ << " " << *m << dendl;
+  ceph_tp(mon, store_sync, __func__);
   entity_inst_t other = m->get_source_inst();
 
   if ((sync_role != SYNC_ROLE_REQUESTER)
@@ -1435,6 +1518,7 @@ void Monitor::handle_sync_finish_reply(MMonSync *m)
       || (sync_leader.get() == NULL)
       || (sync_leader->entity != other)) {
     dout(1) << __func__ << " stray message -- drop it." << dendl;
+    ceph_tp(mon, store_sync_requester, __func__, ceph_lttng_mark_barrier);
     m->put();
     return;
   }
@@ -1460,12 +1544,14 @@ void Monitor::handle_sync_finish_reply(MMonSync *m)
 
   assert(g_conf->mon_sync_requester_kill_at != 11);
 
+  ceph_tp_exit(mon, __func__);
   bootstrap();
 }
 
 void Monitor::handle_sync_abort(MMonSync *m)
 {
   dout(10) << __func__ << " " << *m << dendl;
+  ceph_tp_entry(mon, __func__);
   /* This function's responsabilities are manifold, and they depend on
    * who we (the monitor) are and what is our role in the sync.
    *
@@ -1492,6 +1578,7 @@ void Monitor::handle_sync_abort(MMonSync *m)
       && (sync_leader.get() != NULL)
       && (sync_leader->entity == other)) {
 
+    ceph_tp(mon, store_sync_requester, __func__, ceph_lttng_mark_okay);
     sync_requester_abort();
   } else if ((sync_role & SYNC_ROLE_PROVIDER)
 	     && (sync_entities.count(other) > 0)
@@ -1500,13 +1587,16 @@ void Monitor::handle_sync_abort(MMonSync *m)
     sync_provider_cleanup(other);
   } else {
     dout(1) << __func__ << " stray message -- drop it." << dendl;
+    ceph_tp(mon, store_sync_error, __func__, "stray");
   }
   m->put();
+  ceph_tp_exit(mon, __func__);
 }
 
 void Monitor::handle_sync(MMonSync *m)
 {
   dout(10) << __func__ << " " << *m << dendl;
+  ceph_tp(mon, msg_sync, __func__, m);
   switch (m->op) {
   case MMonSync::OP_START:
     handle_sync_start(m);

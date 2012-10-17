@@ -49,7 +49,6 @@
 #include <memory>
 #include <tr1/memory>
 
-
 #define CEPH_MON_PROTOCOL     9 /* cluster internal */
 
 
@@ -1006,6 +1005,22 @@ private:
     }
     return "???";
   }
+  const string get_sync_role_name(int r) const {
+    string name;
+    if (r & SYNC_ROLE_LEADER)
+      name.append("leader");
+    if (r & SYNC_ROLE_PROVIDER) {
+      if (!name.empty())
+	name.append("|");
+      name.append("provider");
+    }
+    if (r & SYNC_ROLE_REQUESTER) {
+      if (!name.empty())
+	name.append("|");
+      name.append("requester");
+    }
+    return name;
+  }
   /**
    * Obtain a string describing the current Sync State.
    *
@@ -1019,17 +1034,10 @@ private:
       return "";
 
     sn.append(" sync(");
-
-    if (sync_role & SYNC_ROLE_LEADER)
-      sn.append(" leader");
-    if (sync_role & SYNC_ROLE_PROVIDER)
-      sn.append(" provider");
-    if (sync_role & SYNC_ROLE_REQUESTER)
-      sn.append(" requester");
-
+    string role_name = get_sync_role_name(sync_role);
+    sn.append(role_name);
     sn.append(" state ");
     sn.append(get_sync_state_name(sync_state));
-
     sn.append(" )");
 
     return sn;

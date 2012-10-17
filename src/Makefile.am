@@ -72,11 +72,11 @@ LEVELDB_INCLUDE = -I$(top_srcdir)/src/leveldb/include
 endif
 
 
-
 # monitor
 ceph_mon_SOURCES = ceph_mon.cc
 ceph_mon_LDFLAGS = $(AM_LDFLAGS)
-ceph_mon_LDADD = libmon.a $(LIBOS_LDA) $(LIBGLOBAL_LDA)
+ceph_mon_LDADD = libmon.a $(LIBOS_LDA) $(LIBGLOBAL_LDA) \
+								 libceph_lttng.a -ldl -llttng-ust
 ceph_mon_CXXFLAGS = ${AM_CXXFLAGS} \
 	-I$(top_srcdir)/src/leveldb/include
 bin_PROGRAMS += ceph-mon
@@ -281,6 +281,11 @@ BUILT_SOURCES =
 lib_LTLIBRARIES = 
 noinst_LTLIBRARIES = 
 noinst_LIBRARIES =
+
+# lttng tracepoint providers
+libceph_lttng_a_SOURCES = lttng/lttng_mon.c
+noinst_LIBRARIES += libceph_lttng.a
+
 
 # libcephfs
 libcephfs_la_SOURCES = \
