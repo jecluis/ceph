@@ -4034,6 +4034,19 @@ void Monitor::handle_timecheck_leader(MonOpRequestRef op)
 	   << " delta " << delta << " skew_bound " << skew_bound
 	   << " latency " << latency << dendl;
 
+
+  // We do not want to weight the skew with its last known value if the
+  // problem has been fixed. Otherwise we'll end up seeing an outdated state
+  // for a long, long time, while the skew value we have in memory is
+  // gradually brought back to zero. If the change was significant and no
+  // longer poses a potential problem, just reset it.
+  if (timecheck_skews.count(other) > 0 &&
+      skew_bound < timecheck_skews[other] &&
+      skew_bound < cct->_conf->mon_clock_drift_allowed) {
+    // skew must have dropped considerably; do not weight it
+    timecheck_skews.erase(other);
+  }
+
   if (timecheck_skews.count(other) == 0) {
     timecheck_skews[other] = skew_bound;
   } else {
