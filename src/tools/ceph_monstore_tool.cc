@@ -1220,7 +1220,7 @@ int main(int argc, char **argv) {
       for (uint64_t e = p->first; e <= p->second; ++e) {
         txn->erase("paxos", e);
       }
-      txn.compact_range("paxos", p->first, p->second);
+      txn->compact_range("paxos", p->first, p->second);
       st.apply_transaction(txn);
       txn.reset(new MonitorDBStore::Transaction);
     }
