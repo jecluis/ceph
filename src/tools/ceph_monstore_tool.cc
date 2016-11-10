@@ -511,6 +511,31 @@ int inflate_pgmap(MonitorDBStore& st, unsigned n, bool can_be_trimmed) {
   return 0;
 }
 
+
+bool find_surplus_paxos_ranges(
+    MonitorDBStore& st,
+    uint64_t first,
+    list<pair<uint64_t,uint64_t> >* ranges) {
+
+  for (uint64_t e = 0; e < first ; ++e) {
+    if (!st.exists("paxos", e)) {
+      continue;
+    }
+
+    if (ranges->empty()) {
+      ranges->push_back(make_pair<uint64_t,uint64_t>(e, e));
+    } else {
+      pair<uint64_t,uint64_t> &p = ranges->back();
+      if (p.second == e - 1) {
+        p.second = e;
+      } else if (p.second < e) {
+        ranges->push_back(make_pair<uint64_t,uint64_t>(e, e));
+      }
+    }
+  }
+  return !ranges->empty();
+}
+
 int main(int argc, char **argv) {
   int err = 0;
   po::options_description desc("Allowed options");
@@ -1173,25 +1198,9 @@ int main(int argc, char **argv) {
     }
 
     list<pair<uint64_t,uint64_t> > ranges;
+    bool found = find_surplus_paxos_ranges(st, paxos_first, &ranges);
 
-    for (uint64_t e = 0; e < paxos_first ; ++e) {
-      if (!st.exists("paxos", e)) {
-        continue;
-      }
-
-      if (ranges.empty()) {
-        ranges.push_back(make_pair<uint64_t,uint64_t>(e, e));
-      } else {
-        pair<uint64_t,uint64_t> &p = ranges.back();
-        if (p.second == e - 1) {
-          p.second = e;
-        } else if (p.second < e) {
-          ranges.push_back(make_pair<uint64_t,uint64_t>(e, e));
-        }
-      }
-    }
-
-    if (ranges.empty()) {
+    if (!found) {
       std::cout << "did not find any surplus paxos versions" << std::endl;
       err = 0;
       goto done;
@@ -1225,8 +1234,22 @@ int main(int argc, char **argv) {
       txn.reset(new MonitorDBStore::Transaction);
     }
 
-    std::cout << "all done!" << std::endl;
+    std::cout << "making sure we removed all the surplus paxos versions..."
+              << std::endl;
 
+    ranges.clear();
+    found = find_surplus_paxos_ranges(st, paxos_first, &ranges);
+    if (found) {
+      std::cout << "something didn't go right; we still have surplus versions:"
+                << std::endl;
+      for (list<pair<uint64_t,uint64_t> >::const_iterator p = ranges.begin();
+           p != ranges.end(); ++p) {
+        std::cout << " - [ " << p->first << " .. " << p->second
+                  << "]" << std::endl;
+      }
+    } else {
+      std::cout << "all done!" << std::endl;
+    }
 
   } else {
     std::cerr << "Unrecognized command: " << cmd << std::endl;
