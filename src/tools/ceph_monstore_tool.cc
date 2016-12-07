@@ -161,6 +161,7 @@ int parse_cmd_args(
  * commands:
  *
  *  store-copy < --out arg >
+ *  store-copy-conservative < --out arg >
  *  dump-keys
  *  compact
  *  getmonmap < --out arg [ --version arg ] >
@@ -192,6 +193,7 @@ void usage(const char *n, po::options_description &d)
   << "\n"
   << "Commands:\n"
   << "  store-copy PATH                 copies store to PATH\n"
+  << "  store-copy-conservative PATH    copies store to PATH, conservatively\n"
   << "  compact                         compacts the store\n"
   << "  get monmap [-- options]         get monmap (version VER if specified)\n"
   << "                                  (default: last committed)\n"
@@ -506,6 +508,165 @@ int inflate_pgmap(MonitorDBStore& st, unsigned n, bool can_be_trimmed) {
   txn->put("pgmap_meta", "version", ver);
   // this will also piggy back the leftover pgmap added in the loop above
   st.apply_transaction(txn);
+  return 0;
+}
+
+int store_copy_conservative(MonitorDBStore &st, MonitorDBStore &out) {
+
+  // prefixes that don't have a 'first' or a 'last' committed
+  list<string> unbounded;
+  unbounded.push_back("mon_config_key");
+  unbounded.push_back("mkfs");
+  unbounded.push_back("mds_health");
+  unbounded.push_back("monitor");
+  unbounded.push_back("pgmap_meta");
+  unbounded.push_back("pgmap_pg");
+
+  // prefixes that require 'first' and 'last' committed
+  list<string> bounded;
+  bounded.push_back("paxos");
+  bounded.push_back("monmap");
+  bounded.push_back("osdmap");
+  bounded.push_back("mdsmap");
+  bounded.push_back("pgmap");
+  bounded.push_back("auth");
+  bounded.push_back("logm");
+
+  uint64_t total_keys = 0;
+
+  // let's first deal with unbounded prefixes, as they should be less keys
+  for (list<string>::const_iterator p = unbounded.begin();
+       p != unbounded.end(); ++p) {
+
+    std::cout << "copying unbounded prefix '" << *p << "'" << std::endl;
+    uint64_t num_keys = 0;
+
+    KeyValueDB::Iterator it = st.get_iterator(*p);
+    if (!it->valid()) {
+      std::cout << " no keys to copy" << std::endl;
+      continue;
+    }
+
+    MonitorDBStore::TransactionRef tx(new MonitorDBStore::Transaction);
+    while (it->valid()) {
+      string k = it->key();
+      bufferlist bl = it->value();
+
+      tx->put(*p, k, bl);
+
+      ++num_keys;
+      it->next();
+    }
+    tx->compact_prefix(*p);
+    out.apply_transaction(tx);
+    std::cout << " copied " << num_keys << " for prefix '"
+              << *p << "'" << std::endl;
+    total_keys += num_keys;
+  }
+
+  // now let's deal with all the unbounded prefixes
+  uint64_t max_keys_per_tx = 50;
+
+  std::cout << "copy bounded prefixes, with " << max_keys_per_tx
+            << " full/inc versions per transaction" << std::endl;
+
+  for (list<string>::const_iterator p = bounded.begin();
+       p != bounded.end(); ++p) {
+
+    version_t first = st.get(*p, "first_committed");
+    version_t last = st.get(*p, "last_committed"); 
+
+    std::cout << "copying bounded prefix '" << *p
+              << "' [" << first << " .. " << last << "]" << std::endl;
+
+    uint64_t num_keys = 0;
+    version_t v = first;
+
+    bool has_full = (*p == "osdmap" || *p == "logm");
+
+    do {
+
+      MonitorDBStore::TransactionRef tx(new MonitorDBStore::Transaction);
+
+      uint64_t n = 0;
+      while (n < max_keys_per_tx && v <= last) {
+
+        if (st.exists(*p, v)) {
+          bufferlist bl;
+          int r = st.get(*p, v, bl);
+          assert(r == 0);
+          tx->put(*p, v, bl);
+          ++num_keys;
+        } else {
+          std::cerr << " missing incremental ver " << v << " on prefix '"
+                    << *p << "'" << std::endl;
+        }
+
+        if (has_full) {
+          string full_key = st.combine_strings("full", v);
+          if (st.exists(*p, full_key)) {
+            bufferlist full_bl;
+            int r = st.get(*p, full_key, full_bl);
+            assert(r == 0);
+            tx->put(*p, full_key, full_bl);
+            ++num_keys;
+          } else {
+            std::cerr << " missing full ver " << v << " on prefix '"
+              << *p << "'" << std::endl;
+          }
+        }
+          
+        ++n;
+        ++v;
+      }
+      if (!tx->empty()) {
+        tx->compact_prefix(*p);
+        out.apply_transaction(tx);
+      }
+
+    } while (v <= last);
+
+    MonitorDBStore::TransactionRef tx(new MonitorDBStore::Transaction);
+    tx->put(*p, "first_committed", first);
+    tx->put(*p, "last_committed", last);
+    if (st.exists(*p, "latest")) {
+      version_t latest = st.get(*p, "latest");
+      tx->put(*p, "latest", latest);
+    }
+    if (st.exists(*p, "full_latest")) {
+      bufferlist bl;
+      int r = st.get(*p, "full_latest", bl);
+      assert(r == 0);
+      tx->put(*p, "full_latest", bl);
+    }
+
+    if (*p == "paxos") {
+      // paxos-specific keys
+      if (st.exists(*p, "pending_pn")) {
+        version_t pending_pn = st.get(*p, "pending_pn");
+        tx->put(*p, "pending_pn", pending_pn);
+      }
+      if (st.exists(*p, "pending_v")) {
+        version_t pending_v = st.get(*p, "pending_v");
+        tx->put(*p, "pending_v", pending_v);
+      }
+    } else if (*p == "auth" || *p == "pgmap") {
+      // auth and pgmap may have 'format_version' keys
+      if (st.exists(*p, "format_version")) {
+        version_t format_v = st.get(*p, "format_version");
+        tx->put(*p, "format_version", format_v);
+      }
+    }
+
+    out.apply_transaction(tx);
+    out.compact();
+
+    std::cout << " copied " << num_keys << " k/v for prefix '"
+              << *p << "'" << std::endl;
+    total_keys += num_keys;
+  }
+
+  std::cout << "copied a total of " << total_keys << " k/v's" << std::endl;
   return 0;
 }
 
@@ -1012,7 +1173,7 @@ int main(int argc, char **argv) {
       t->compact_prefix(prefix);
       st.apply_transaction(t);
     }
-  } else if (cmd == "store-copy") {
+  } else if (cmd == "store-copy" || cmd == "store-copy-conservative") {
     if (subcmds.size() < 1 || subcmds[0].empty()) {
       usage(argv[0], desc);
       err = EINVAL;
@@ -1026,11 +1187,17 @@ int main(int argc, char **argv) {
       stringstream ss;
       int r = out_store.create_and_open(ss);
       if (r < 0) {
-        std::cerr << ss.str() << std::endl;
+        std::cerr << "create_and_open: " << ss.str() << std::endl;
         goto done;
       }
     }
 
+    if (cmd == "store-copy-conservative") {
+      int r = store_copy_conservative(st, out_store);
+      assert(r == 0);
+      out_store.close();
+      goto done;
+    }
 
     KeyValueDB::WholeSpaceIterator it = st.get_iterator();
     uint64_t total_keys = 0;
