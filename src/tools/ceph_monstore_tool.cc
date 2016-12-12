@@ -570,6 +570,8 @@ int store_copy_conservative(MonitorDBStore &st, MonitorDBStore &out) {
   std::cout << "copy bounded prefixes, with " << max_keys_per_tx
             << " full/inc versions per transaction" << std::endl;
 
+  string full_latest_name = st.combine_strings("full", "latest");
+
   for (list<string>::const_iterator p = bounded.begin();
        p != bounded.end(); ++p) {
 
@@ -582,8 +584,7 @@ int store_copy_conservative(MonitorDBStore &st, MonitorDBStore &out) {
     uint64_t num_keys = 0;
     version_t v = first;
 
-    bool has_full = (*p == "osdmap" || *p == "logm");
-
+    bool may_have_full = !(*p == "paxos");
     do {
 
       MonitorDBStore::TransactionRef tx(new MonitorDBStore::Transaction);
@@ -602,7 +603,7 @@ int store_copy_conservative(MonitorDBStore &st, MonitorDBStore &out) {
                     << *p << "'" << std::endl;
         }
 
-        if (has_full) {
+        if (may_have_full) {
           string full_key = st.combine_strings("full", v);
           if (st.exists(*p, full_key)) {
             bufferlist full_bl;
@@ -611,7 +612,7 @@ int store_copy_conservative(MonitorDBStore &st, MonitorDBStore &out) {
             tx->put(*p, full_key, full_bl);
             ++num_keys;
           } else {
-            std::cerr << " missing full ver " << v << " on prefix '"
+            std::cout << " unavailable full ver " << v << " on prefix '"
               << *p << "'" << std::endl;
           }
         }
@@ -633,11 +634,11 @@ int store_copy_conservative(MonitorDBStore &st, MonitorDBStore &out) {
       version_t latest = st.get(*p, "latest");
       tx->put(*p, "latest", latest);
     }
-    if (st.exists(*p, "full_latest")) {
+    if (st.exists(*p, full_latest_name)) {
       bufferlist bl;
-      int r = st.get(*p, "full_latest", bl);
+      int r = st.get(*p, full_latest_name, bl);
       assert(r == 0);
-      tx->put(*p, "full_latest", bl);
+      tx->put(*p, full_latest_name, bl);
     }
 
     if (*p == "paxos") {
