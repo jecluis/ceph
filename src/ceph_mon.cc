@@ -156,6 +156,152 @@ int check_mon_data_empty()
   return code;
 }
 
+int mkfs(const string &n, const string &osdmapfn)
+{
+  int err = check_mon_data_exists();
+  if (err == -ENOENT) {
+    if (::mkdir(g_conf->mon_data.c_str(), 0755)) {
+      cerr << "mkdir(" << g_conf->mon_data << ") : "
+           << cpp_strerror(errno) << std::endl;
+      exit(1);
+    }
+  } else if (err < 0) {
+    cerr << "error opening '" << g_conf->mon_data << "': "
+         << cpp_strerror(-err) << std::endl;
+    exit(-err);
+  }
+
+  err = check_mon_data_empty();
+  if (err == -ENOTEMPTY) {
+    // Mon may exist.  Let the user know and exit gracefully.
+    cerr << "'" << g_conf->mon_data << "' already exists and is not empty"
+         << ": monitor may already exist" << std::endl;
+    exit(0);
+  } else if (err < 0) {
+    cerr << "error checking if '" << g_conf->mon_data << "' is empty: "
+         << cpp_strerror(-err) << std::endl;
+    exit(-err);
+  }
+
+  // resolve public_network -> public_addr
+  pick_addresses(g_ceph_context, CEPH_PICK_ADDRESS_PUBLIC);
+
+  common_init_finish(g_ceph_context);
+
+  bufferlist monmapbl, osdmapbl;
+  std::string error;
+  MonMap monmap;
+
+  // load or generate monmap
+  if (g_conf->monmap.length()) {
+    int err = monmapbl.read_file(g_conf->monmap.c_str(), &error);
+    if (err < 0) {
+      cerr << n << ": error reading " << g_conf->monmap
+           << ": " << error << std::endl;
+      exit(1);
+    }
+    try {
+      monmap.decode(monmapbl);
+
+      // always mark seed/mkfs monmap as epoch 0
+      monmap.set_epoch(0);
+    }
+    catch (const buffer::error& e) {
+      cerr << n << ": error decoding monmap " << g_conf->monmap
+           << ": " << e.what() << std::endl;
+      exit(1);
+    }      
+  } else {
+    int err = monmap.build_initial(g_ceph_context, cerr);
+    if (err < 0) {
+      cerr << n << ": warning: no initial monitors; "
+           << "must use admin socket to feed hints" << std::endl;
+    }
+
+    // am i part of the initial quorum?
+    if (monmap.contains(g_conf->name.get_id())) {
+      // hmm, make sure the ip listed exists on the current host?
+      // maybe later.
+    } else if (!g_conf->public_addr.is_blank_ip()) {
+      entity_addr_t a = g_conf->public_addr;
+      if (a.get_port() == 0)
+        a.set_port(CEPH_MON_PORT);
+      if (monmap.contains(a)) {
+        string name;
+        monmap.get_addr_name(a, name);
+        monmap.rename(name, g_conf->name.get_id());
+        cout << n << ": renaming mon." << name << " " << a
+             << " to mon." << g_conf->name.get_id() << std::endl;
+      }
+    }
+
+    // is a local address listed without a name?  if so, name myself.
+    list<entity_addr_t> ls;
+    monmap.list_addrs(ls);
+    entity_addr_t local;
+
+    if (have_local_addr(g_ceph_context, ls, &local)) {
+      string name;
+      monmap.get_addr_name(local, name);
+
+      if (name.compare(0, 7, "noname-") == 0) {
+        cout << n << ": mon." << name << " " << local
+             << " is local, renaming to mon." << g_conf->name.get_id()
+             << std::endl;
+        monmap.rename(name, g_conf->name.get_id());
+      } else if (name != g_conf->name.get_id()) {
+        cout << n << ": mon." << name << " " << local
+             << " is local, but not 'noname-' + something; "
+             << "not assuming it's me" << std::endl;
+      }
+    }
+  }
+
+  if (!g_conf->fsid.is_zero()) {
+    monmap.fsid = g_conf->fsid;
+    cout << n << ": set fsid to " << g_conf->fsid << std::endl;
+  }
+
+  if (monmap.fsid.is_zero()) {
+    cerr << n << ": generated monmap has no fsid; use '--fsid <uuid>'"
+         << std::endl;
+    exit(10);
+  }
+
+  //monmap.print(cout);
+
+  // osdmap
+  if (osdmapfn.length()) {
+    err = osdmapbl.read_file(osdmapfn.c_str(), &error);
+    if (err < 0) {
+      cerr << n << ": error reading " << osdmapfn << ": "
+           << error << std::endl;
+      exit(1);
+    }
+  }
+
+  // go
+  MonitorDBStore store(g_conf->mon_data);
+  int r = store.create_and_open(cerr);
+  if (r < 0) {
+    cerr << n << ": error opening mon data directory at '"
+         << g_conf->mon_data << "': " << cpp_strerror(r) << std::endl;
+    exit(1);
+  }
+  assert(r == 0);
+
+  Monitor mon(g_ceph_context, g_conf->name.get_id(), &store, 0, &monmap);
+  r = mon.mkfs(osdmapbl);
+  if (r < 0) {
+    cerr << n << ": error creating monfs: " << cpp_strerror(r) << std::endl;
+    exit(1);
+  }
+  store.close();
+  cout << n << ": created monfs at " << g_conf->mon_data 
+       << " for " << g_conf->name << std::endl;
+  return 0;
+}
+
 static void usage()
 {
   cerr << "usage: ceph-mon -i monid [flags]" << std::endl;
@@ -189,7 +335,7 @@ int main(int argc, const char **argv)
 {
   int err;
 
-  bool mkfs = false;
+  bool do_mkfs = false;
   bool compact = false;
   bool force_sync = false;
   bool yes_really = false;
@@ -254,7 +400,7 @@ int main(int argc, const char **argv)
     } else if (ceph_argparse_flag(args, i, "-h", "--help", (char*)NULL)) {
       usage();
     } else if (ceph_argparse_flag(args, i, "--mkfs", (char*)NULL)) {
-      mkfs = true;
+      do_mkfs = true;
     } else if (ceph_argparse_flag(args, i, "--compact", (char*)NULL)) {
       compact = true;
     } else if (ceph_argparse_flag(args, i, "--force-sync", (char*)NULL)) {
@@ -293,143 +439,11 @@ int main(int argc, const char **argv)
   }
 
   // -- mkfs --
-  if (mkfs) {
-
-    int err = check_mon_data_exists();
-    if (err == -ENOENT) {
-      if (::mkdir(g_conf->mon_data.c_str(), 0755)) {
-	cerr << "mkdir(" << g_conf->mon_data << ") : "
-	     << cpp_strerror(errno) << std::endl;
-	exit(1);
-      }
-    } else if (err < 0) {
-      cerr << "error opening '" << g_conf->mon_data << "': "
-           << cpp_strerror(-err) << std::endl;
-      exit(-err);
+  if (do_mkfs) {
+    err = mkfs(argv[0], osdmapfn);
+    if (err < 0) {
+      return -err;
     }
-
-    err = check_mon_data_empty();
-    if (err == -ENOTEMPTY) {
-      // Mon may exist.  Let the user know and exit gracefully.
-      cerr << "'" << g_conf->mon_data << "' already exists and is not empty"
-           << ": monitor may already exist" << std::endl;
-      exit(0);
-    } else if (err < 0) {
-      cerr << "error checking if '" << g_conf->mon_data << "' is empty: "
-           << cpp_strerror(-err) << std::endl;
-      exit(-err);
-    }
-
-    // resolve public_network -> public_addr
-    pick_addresses(g_ceph_context, CEPH_PICK_ADDRESS_PUBLIC);
-
-    common_init_finish(g_ceph_context);
-
-    bufferlist monmapbl, osdmapbl;
-    std::string error;
-    MonMap monmap;
-
-    // load or generate monmap
-    if (g_conf->monmap.length()) {
-      int err = monmapbl.read_file(g_conf->monmap.c_str(), &error);
-      if (err < 0) {
-	cerr << argv[0] << ": error reading " << g_conf->monmap << ": " << error << std::endl;
-	exit(1);
-      }
-      try {
-	monmap.decode(monmapbl);
-
-	// always mark seed/mkfs monmap as epoch 0
-	monmap.set_epoch(0);
-      }
-      catch (const buffer::error& e) {
-	cerr << argv[0] << ": error decoding monmap " << g_conf->monmap << ": " << e.what() << std::endl;
-	exit(1);
-      }      
-    } else {
-      int err = monmap.build_initial(g_ceph_context, cerr);
-      if (err < 0) {
-	cerr << argv[0] << ": warning: no initial monitors; must use admin socket to feed hints" << std::endl;
-      }
-
-      // am i part of the initial quorum?
-      if (monmap.contains(g_conf->name.get_id())) {
-	// hmm, make sure the ip listed exists on the current host?
-	// maybe later.
-      } else if (!g_conf->public_addr.is_blank_ip()) {
-	entity_addr_t a = g_conf->public_addr;
-	if (a.get_port() == 0)
-	  a.set_port(CEPH_MON_PORT);
-	if (monmap.contains(a)) {
-	  string name;
-	  monmap.get_addr_name(a, name);
-	  monmap.rename(name, g_conf->name.get_id());
-	  cout << argv[0] << ": renaming mon." << name << " " << a
-	       << " to mon." << g_conf->name.get_id() << std::endl;
-	}
-      }
-
-      // is a local address listed without a name?  if so, name myself.
-      list<entity_addr_t> ls;
-      monmap.list_addrs(ls);
-      entity_addr_t local;
-
-      if (have_local_addr(g_ceph_context, ls, &local)) {
-        string name;
-        monmap.get_addr_name(local, name);
-
-        if (name.compare(0, 7, "noname-") == 0) {
-          cout << argv[0] << ": mon." << name << " " << local
-            << " is local, renaming to mon." << g_conf->name.get_id() << std::endl;
-          monmap.rename(name, g_conf->name.get_id());
-        } else if (name != g_conf->name.get_id()) {
-          cout << argv[0] << ": mon." << name << " " << local
-            << " is local, but not 'noname-' + something; not assuming it's me" << std::endl;
-        }
-      }
-    }
-
-    if (!g_conf->fsid.is_zero()) {
-      monmap.fsid = g_conf->fsid;
-      cout << argv[0] << ": set fsid to " << g_conf->fsid << std::endl;
-    }
-    
-    if (monmap.fsid.is_zero()) {
-      cerr << argv[0] << ": generated monmap has no fsid; use '--fsid <uuid>'" << std::endl;
-      exit(10);
-    }
-
-    //monmap.print(cout);
-
-    // osdmap
-    if (osdmapfn.length()) {
-      err = osdmapbl.read_file(osdmapfn.c_str(), &error);
-      if (err < 0) {
-	cerr << argv[0] << ": error reading " << osdmapfn << ": "
-	     << error << std::endl;
-	exit(1);
-      }
-    }
-
-    // go
-    MonitorDBStore store(g_conf->mon_data);
-    int r = store.create_and_open(cerr);
-    if (r < 0) {
-      cerr << argv[0] << ": error opening mon data directory at '"
-           << g_conf->mon_data << "': " << cpp_strerror(r) << std::endl;
-      exit(1);
-    }
-    assert(r == 0);
-
-    Monitor mon(g_ceph_context, g_conf->name.get_id(), &store, 0, &monmap);
-    r = mon.mkfs(osdmapbl);
-    if (r < 0) {
-      cerr << argv[0] << ": error creating monfs: " << cpp_strerror(r) << std::endl;
-      exit(1);
-    }
-    store.close();
-    cout << argv[0] << ": created monfs at " << g_conf->mon_data 
-	 << " for " << g_conf->name << std::endl;
     return 0;
   }
 
