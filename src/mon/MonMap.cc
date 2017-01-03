@@ -495,12 +495,19 @@ int MonMap::build_initial(CephContext *cct, ostream& errout)
     sections.push_back("mon");
     sections.push_back("global");
     std::string val;
-    int res = conf->get_val_from_conf_file(sections, "mon addr", val, true);
+    int res = conf->get_val_from_conf_file(sections, "public addr", val, true);
     if (res) {
-      errout << "failed to get an address for mon." << *m << ": error "
-	   << res << std::endl;
-      continue;
+      errout << "failed to find a 'public addr' for mon." << *m
+             << ": trying deprecated 'mon addr'" << std::endl;
+
+      res = conf->get_val_from_conf_file(sections, "mon addr", val, true);
+      if (res) {
+        errout << "failed to get an address for mon." << *m << ": error "
+               << res << std::endl;
+        continue;
+      }
     }
+ 
     entity_addr_t addr;
     if (!addr.parse(val.c_str())) {
       errout << "unable to parse address for mon." << *m
