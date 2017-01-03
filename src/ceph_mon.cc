@@ -367,25 +367,25 @@ int main(int argc, const char **argv)
 	  cout << argv[0] << ": renaming mon." << name << " " << a
 	       << " to mon." << g_conf->name.get_id() << std::endl;
 	}
-      } else {
-	// is a local address listed without a name?  if so, name myself.
-	list<entity_addr_t> ls;
-	monmap.list_addrs(ls);
-	entity_addr_t local;
+      }
 
-	if (have_local_addr(g_ceph_context, ls, &local)) {
-	  string name;
-	  monmap.get_addr_name(local, name);
+      // is a local address listed without a name?  if so, name myself.
+      list<entity_addr_t> ls;
+      monmap.list_addrs(ls);
+      entity_addr_t local;
 
-	  if (name.compare(0, 7, "noname-") == 0) {
-	    cout << argv[0] << ": mon." << name << " " << local
-		 << " is local, renaming to mon." << g_conf->name.get_id() << std::endl;
-	    monmap.rename(name, g_conf->name.get_id());
-	  } else {
-	    cout << argv[0] << ": mon." << name << " " << local
-		 << " is local, but not 'noname-' + something; not assuming it's me" << std::endl;
-	  }
-	}
+      if (have_local_addr(g_ceph_context, ls, &local)) {
+        string name;
+        monmap.get_addr_name(local, name);
+
+        if (name.compare(0, 7, "noname-") == 0) {
+          cout << argv[0] << ": mon." << name << " " << local
+            << " is local, renaming to mon." << g_conf->name.get_id() << std::endl;
+          monmap.rename(name, g_conf->name.get_id());
+        } else if (name != g_conf->name.get_id()) {
+          cout << argv[0] << ": mon." << name << " " << local
+            << " is local, but not 'noname-' + something; not assuming it's me" << std::endl;
+        }
       }
     }
 
