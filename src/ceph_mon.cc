@@ -163,12 +163,12 @@ int mkfs(const string &n, const string &osdmapfn)
     if (::mkdir(g_conf->mon_data.c_str(), 0755)) {
       cerr << "mkdir(" << g_conf->mon_data << ") : "
            << cpp_strerror(errno) << std::endl;
-      exit(1);
+      return -errno;
     }
   } else if (err < 0) {
     cerr << "error opening '" << g_conf->mon_data << "': "
          << cpp_strerror(-err) << std::endl;
-    exit(-err);
+    return -err;
   }
 
   err = check_mon_data_empty();
@@ -176,11 +176,11 @@ int mkfs(const string &n, const string &osdmapfn)
     // Mon may exist.  Let the user know and exit gracefully.
     cerr << "'" << g_conf->mon_data << "' already exists and is not empty"
          << ": monitor may already exist" << std::endl;
-    exit(0);
+    return 0;
   } else if (err < 0) {
     cerr << "error checking if '" << g_conf->mon_data << "' is empty: "
          << cpp_strerror(-err) << std::endl;
-    exit(-err);
+    return err;
   }
 
   // resolve public_network -> public_addr
@@ -198,7 +198,7 @@ int mkfs(const string &n, const string &osdmapfn)
     if (err < 0) {
       cerr << n << ": error reading " << g_conf->monmap
            << ": " << error << std::endl;
-      exit(1);
+      return err;
     }
     try {
       monmap.decode(monmapbl);
@@ -209,7 +209,7 @@ int mkfs(const string &n, const string &osdmapfn)
     catch (const buffer::error& e) {
       cerr << n << ": error decoding monmap " << g_conf->monmap
            << ": " << e.what() << std::endl;
-      exit(1);
+      return -EINVAL;
     }      
   } else {
     int err = monmap.build_initial(g_ceph_context, cerr);
@@ -265,7 +265,7 @@ int mkfs(const string &n, const string &osdmapfn)
   if (monmap.fsid.is_zero()) {
     cerr << n << ": generated monmap has no fsid; use '--fsid <uuid>'"
          << std::endl;
-    exit(10);
+    return -10;
   }
 
   //monmap.print(cout);
@@ -276,7 +276,7 @@ int mkfs(const string &n, const string &osdmapfn)
     if (err < 0) {
       cerr << n << ": error reading " << osdmapfn << ": "
            << error << std::endl;
-      exit(1);
+      return err;
     }
   }
 
@@ -286,7 +286,7 @@ int mkfs(const string &n, const string &osdmapfn)
   if (r < 0) {
     cerr << n << ": error opening mon data directory at '"
          << g_conf->mon_data << "': " << cpp_strerror(r) << std::endl;
-    exit(1);
+    return r;
   }
   assert(r == 0);
 
@@ -294,7 +294,7 @@ int mkfs(const string &n, const string &osdmapfn)
   r = mon.mkfs(osdmapbl);
   if (r < 0) {
     cerr << n << ": error creating monfs: " << cpp_strerror(r) << std::endl;
-    exit(1);
+    return r;
   }
   store.close();
   cout << n << ": created monfs at " << g_conf->mon_data 
