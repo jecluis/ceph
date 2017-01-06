@@ -10,6 +10,7 @@
 
 #include "include/ceph_features.h"
 #include "include/addr_parsing.h"
+#include "include/str_map.h"
 #include "common/ceph_argparse.h"
 #include "common/dns_resolve.h"
 #include "common/errno.h"
