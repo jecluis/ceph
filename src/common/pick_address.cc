@@ -127,6 +127,25 @@ void pick_addresses(CephContext *cct, int needs)
   freeifaddrs(ifa);
 }
 
+int list_local_addrs(CephContext *cct, set<entity_addr_t> *ls)
+{
+  struct ifaddrs *ifa;
+  int r = getifaddrs(&ifa);
+  if (r < 0) {
+    return -errno;
+  }
+
+  for (struct ifaddrs *addrs = ifa; addrs != NULL; addrs = addrs->ifa_next) {
+    if (addrs->ifa_addr) {
+      entity_addr_t a;
+      a.set_sockaddr(addrs->ifa_addr);
+      ls->insert(a);
+    }
+  }
+  freeifaddrs(ifa);
+  return 0;
+}
+
 bool have_local_addr(CephContext *cct, const list<entity_addr_t>& ls, entity_addr_t *match)
 {
   struct ifaddrs *ifa;

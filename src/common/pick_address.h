@@ -31,6 +31,14 @@ class CephContext;
 void pick_addresses(CephContext *cct, int needs);
 
 /**
+ * obtain a set of configured addresses on the local host
+ *
+ * @param cct context
+ * @param ls  [out] pointer to set holding the local addresses.
+ */
+int list_local_addrs(CephContext *cct, set<entity_addr_t> *ls);
+
+/**
  * check for a locally configured address
  *
  * check if any of the listed addresses is configured on the local host.
