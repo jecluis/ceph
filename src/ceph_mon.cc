@@ -156,6 +156,15 @@ int check_mon_data_empty()
   return code;
 }
 
+bool is_local_addr(const entity_addr_t& a, const set<entity_addr_t>& addrs)
+{
+  for (auto &p : addrs) {
+    if (a.is_same_host(p))
+      return true;
+  }
+  return false;
+}
+
 int mkfs(const string &n, const string &osdmapfn)
 {
   int err = check_mon_data_exists();
@@ -218,19 +227,44 @@ int mkfs(const string &n, const string &osdmapfn)
            << "must use admin socket to feed hints" << std::endl;
     }
 
+    set<entity_addr_t> local_addrs;
+    err = list_local_addrs(g_ceph_context, &local_addrs);
+    if (err < 0) {
+      cerr << n << ": unable to fetch interfaces and addresses: "
+           << cpp_strerror(-err) << std::endl;
+      return err;
+    }
+
+    entity_addr_t public_addr = g_conf->public_addr;
+    bool has_local_public_addr = false;
+    if (!public_addr.is_blank_ip()) {
+      if (public_addr.get_port() == 0)
+        public_addr.set_port(CEPH_MON_PORT);
+      has_local_public_addr = is_local_addr(public_addr, local_addrs);
+    }
+
     // am i part of the initial quorum?
     if (monmap.contains(g_conf->name.get_id())) {
-      // hmm, make sure the ip listed exists on the current host?
-      // maybe later.
+      // make sure the ip listed exists on the current host
+      bool found = false;
+      const entity_addr_t a = monmap.get_addr(g_conf->name.get_id());
+      for (auto &p : local_addrs) {
+        if (a.is_same_host(p)) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        // just let the user know something feels wrong
+        cerr << "monmap address for mon." << g_conf->name.get_id()
+             << " is " << a << " which is not available locally" << std::endl;
+      }
     } else if (!g_conf->public_addr.is_blank_ip()) {
-      entity_addr_t a = g_conf->public_addr;
-      if (a.get_port() == 0)
-        a.set_port(CEPH_MON_PORT);
-      if (monmap.contains(a)) {
+      if (monmap.contains(public_addr)) {
         string name;
-        monmap.get_addr_name(a, name);
+        monmap.get_addr_name(public_addr, name);
         monmap.rename(name, g_conf->name.get_id());
-        cout << n << ": renaming mon." << name << " " << a
+        cout << n << ": renaming mon." << name << " " << public_addr
              << " to mon." << g_conf->name.get_id() << std::endl;
       }
     }
@@ -240,17 +274,30 @@ int mkfs(const string &n, const string &osdmapfn)
     monmap.list_addrs(ls);
     entity_addr_t local;
 
-    if (have_local_addr(g_ceph_context, ls, &local)) {
+    // only rename a local address if we
+    //  - DO NOT have a public address
+    // or
+    //  - the public address provided IS NOT local.
+    //
+    // otherwise, rename the first 'noname-' local entry.
+
+    for (auto &p : ls) {
+      if (has_local_public_addr ||
+          !public_addr.is_blank_ip() ||
+          !is_local_addr(p, local_addrs)) {
+        continue;
+      }
+
       string name;
-      monmap.get_addr_name(local, name);
+      monmap.get_addr_name(p, name);
 
       if (name.compare(0, 7, "noname-") == 0) {
-        cout << n << ": mon." << name << " " << local
+        cout << n << ": mon." << name << " " << p
              << " is local, renaming to mon." << g_conf->name.get_id()
              << std::endl;
         monmap.rename(name, g_conf->name.get_id());
       } else if (name != g_conf->name.get_id()) {
-        cout << n << ": mon." << name << " " << local
+        cout << n << ": mon." << name << " " << p
              << " is local, but not 'noname-' + something; "
              << "not assuming it's me" << std::endl;
       }
