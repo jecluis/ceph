@@ -16,6 +16,17 @@ extern "C" {
 
 int safe_cat(char **pstr, int *plen, int pos, const char *str2);
 
+/**
+ * resolves one name into a list of addresses
+ *
+ * Returns a string allocated by malloc; caller must free.
+ *
+ * @param orig_str name to resolve.
+ * @param[out] str_p if defined, copy of @p orig_str that can be modified.
+ * @returns a comma-delimited list of addresses to be freed by the caller.
+ */
+char *resolve_one_name(const char *orig_str, char *str_p);
+
 /*
  * returns a string allocated by malloc; caller must free
  */
