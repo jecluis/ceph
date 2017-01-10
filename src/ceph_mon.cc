@@ -349,6 +349,59 @@ int mkfs(const string &n, const string &osdmapfn)
   return 0;
 }
 
+int find_binding_addr(const char *n, MonMap &monmap, entity_addr_t *ipaddr)
+{
+  assert(n != nullptr);
+  assert(ipaddr != nullptr);
+
+  if (monmap.contains(g_conf->name.get_id())) {
+    *ipaddr = monmap.get_addr(g_conf->name.get_id());
+
+    // print helpful warning if the conf file doesn't match
+    entity_addr_t conf_addr;
+    std::vector <std::string> my_sections;
+    g_conf->get_my_sections(my_sections);
+    std::string mon_addr_str;
+    if (g_conf->get_val_from_conf_file(my_sections, "mon addr",
+          mon_addr_str, true) == 0) {
+      if (conf_addr.parse(mon_addr_str.c_str()) && (*ipaddr != conf_addr)) {
+        derr << "WARNING: 'mon addr' config option " << conf_addr
+          << " does not match monmap file" << std::endl
+          << "         continuing with monmap configuration" << dendl;
+      }
+    }
+    return 0;
+  }
+
+  dout(0) << g_conf->name << " does not exist in monmap, "
+          << "will attempt to join an existing cluster" << dendl;
+
+  pick_addresses(g_ceph_context, CEPH_PICK_ADDRESS_PUBLIC);
+  if (!g_conf->public_addr.is_blank_ip()) {
+    *ipaddr = g_conf->public_addr;
+    if (ipaddr->get_port() == 0)
+      ipaddr->set_port(CEPH_MON_PORT);
+    dout(0) << "using public_addr " << g_conf->public_addr << " -> "
+            << *ipaddr << dendl;
+  } else {
+    MonMap tmpmap;
+    int err = tmpmap.build_initial(g_ceph_context, cerr);
+    if (err < 0) {
+      derr << n << ": error generating initial monmap: "
+           << cpp_strerror(err) << dendl;
+      return err;
+    }
+    if (tmpmap.contains(g_conf->name.get_id())) {
+      *ipaddr = tmpmap.get_addr(g_conf->name.get_id());
+    } else {
+      derr << "no public_addr or public_network specified, and " << g_conf->name
+           << " not present in monmap or ceph.conf" << dendl;
+      return -ENOENT;
+    }
+  }
+  return 0;
+}
+
 static void usage()
 {
   cerr << "usage: ceph-mon -i monid [flags]" << std::endl;
@@ -664,49 +717,11 @@ int main(int argc, const char **argv)
 
   // this is what i will bind to
   entity_addr_t ipaddr;
-
-  if (monmap.contains(g_conf->name.get_id())) {
-    ipaddr = monmap.get_addr(g_conf->name.get_id());
-
-    // print helpful warning if the conf file doesn't match
-    entity_addr_t conf_addr;
-    std::vector <std::string> my_sections;
-    g_conf->get_my_sections(my_sections);
-    std::string mon_addr_str;
-    if (g_conf->get_val_from_conf_file(my_sections, "mon addr",
-				       mon_addr_str, true) == 0) {
-      if (conf_addr.parse(mon_addr_str.c_str()) && (ipaddr != conf_addr)) {
-	derr << "WARNING: 'mon addr' config option " << conf_addr
-	     << " does not match monmap file" << std::endl
-	     << "         continuing with monmap configuration" << dendl;
-      }
-    }
-  } else {
-    dout(0) << g_conf->name << " does not exist in monmap, will attempt to join an existing cluster" << dendl;
-
-    pick_addresses(g_ceph_context, CEPH_PICK_ADDRESS_PUBLIC);
-    if (!g_conf->public_addr.is_blank_ip()) {
-      ipaddr = g_conf->public_addr;
-      if (ipaddr.get_port() == 0)
-	ipaddr.set_port(CEPH_MON_PORT);
-      dout(0) << "using public_addr " << g_conf->public_addr << " -> "
-	      << ipaddr << dendl;
-    } else {
-      MonMap tmpmap;
-      int err = tmpmap.build_initial(g_ceph_context, cerr);
-      if (err < 0) {
-	derr << argv[0] << ": error generating initial monmap: "
-             << cpp_strerror(err) << dendl;
-	usage();
-	prefork.exit(1);
-      }
-      if (tmpmap.contains(g_conf->name.get_id())) {
-	ipaddr = tmpmap.get_addr(g_conf->name.get_id());
-      } else {
-	derr << "no public_addr or public_network specified, and " << g_conf->name
-	     << " not present in monmap or ceph.conf" << dendl;
-	prefork.exit(1);
-      }
+  {
+    int err = find_binding_addr(argv[0], monmap, &ipaddr);
+    if (err < 0) {
+      usage();
+      prefork.exit(1);
     }
   }
 
