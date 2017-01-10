@@ -348,31 +348,50 @@ int parse_host_map(const string &str,
 
   int cnt = 0;
   for (auto &p : m) {
+    vector<entity_addr_t> v;
     entity_addr_t addr;
     string addr_str = (p.second.empty() ? p.first : p.second);
     string name;
 
     const char *s = addr_str.c_str();
-    if (!addr.parse(s, &s)) {
-      return -EINVAL;
-
-    }
-
-    if (addr.get_port() == 0)
-      addr.set_port(CEPH_MON_PORT);
-
-    if (!p.second.empty()) {
-      name = p.first;
+    if (addr.parse(s, &s)) {
+      v.push_back(addr);
     } else {
-      char n[2];
-      n[0] = 'a' + cnt;
-      n[1] = '\0';
-      name = default_prefix;
-      name += n;
+
+      // if we can't parse the address, attempt to parse it as a name
+      char *n = resolve_one_name(s, NULL);
+      if (!n) {
+        // whatever we got as an address must be invalid.
+        return -EINVAL;
+      }
+      bool success = parse_ip_port_vec(n, v);
+      free(n);
+      if (!success) {
+        return -EINVAL;
+      }
+
+      // empty does not mean an error is occurring at this stage
+      if (v.empty())
+        continue;
     }
 
-    (*addrs)[name] = addr;
-    ++cnt;
+    for (auto &a : v) {
+      if (a.get_port() == 0)
+        a.set_port(CEPH_MON_PORT);
+
+      if (v.size() == 1 && !p.second.empty()) {
+        name = p.first;
+      } else {
+        char n[2];
+        n[0] = 'a' + cnt;
+        n[1] = '\0';
+        name = default_prefix;
+        name += n;
+      }
+
+      (*addrs)[name] = a;
+      ++cnt;
+    }
   }
 
   return 0;
@@ -382,45 +401,18 @@ int MonMap::build_from_host_list(std::string hostlist, std::string prefix)
 {
   map<string,entity_addr_t> addrs_map;
   int r = parse_host_map(hostlist, &addrs_map, prefix);
-  if (r >= 0) {
-    if (addrs_map.empty())
-      return -ENOENT;
-
-    for (auto &p : addrs_map) {
-      if (!contains(p.second))
-        add(p.first, p.second);
-    }
-
-    return 0;
+  if (r < 0) {
+    return r;
   }
 
-  // maybe they passed us a DNS-resolvable name
-  char *hosts = NULL;
-  hosts = resolve_addrs(hostlist.c_str());
-  if (!hosts)
-    return -EINVAL;
-
-  vector<entity_addr_t> addrs;
-  bool success = parse_ip_port_vec(hosts, addrs);
-  free(hosts);
-  if (!success)
-    return -EINVAL;
-
-  if (addrs.empty())
+  if (addrs_map.empty())
     return -ENOENT;
 
-  for (unsigned i=0; i<addrs.size(); i++) {
-    char n[2];
-    n[0] = 'a' + i;
-    n[1] = 0;
-    if (addrs[i].get_port() == 0)
-      addrs[i].set_port(CEPH_MON_PORT);
-    string name = prefix;
-    name += n;
-    if (!contains(addrs[i]) &&
-	!contains(name))
-      add(name, addrs[i]);
+  for (auto &p : addrs_map) {
+    if (!contains(p.first) && !contains(p.second))
+      add(p.first, p.second);
   }
+
   return 0;
 }
 
