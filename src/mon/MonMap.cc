@@ -336,24 +336,61 @@ void MonMap::dump(Formatter *f) const
   f->close_section();
 }
 
+int parse_host_map(const string &str,
+                   map<string,entity_addr_t> *addrs,
+                   string &default_prefix)
+{
+  map<string,string> m;
+  int r = get_str_map(str, &m);
+  if (r < 0) {
+    return r;
+  }
+
+  int cnt = 0;
+  for (auto &p : m) {
+    entity_addr_t addr;
+    string addr_str = (p.second.empty() ? p.first : p.second);
+    string name;
+
+    const char *s = addr_str.c_str();
+    if (!addr.parse(s, &s)) {
+      return -EINVAL;
+
+    }
+
+    if (addr.get_port() == 0)
+      addr.set_port(CEPH_MON_PORT);
+
+    if (!p.second.empty()) {
+      name = p.first;
+    } else {
+      char n[2];
+      n[0] = 'a' + cnt;
+      n[1] = '\0';
+      name = default_prefix;
+      name += n;
+    }
+
+    (*addrs)[name] = addr;
+    ++cnt;
+  }
+
+  return 0;
+}
 
 int MonMap::build_from_host_list(std::string hostlist, std::string prefix)
 {
-  vector<entity_addr_t> addrs;
-  if (parse_ip_port_vec(hostlist.c_str(), addrs)) {
-    if (addrs.empty())
+  map<string,entity_addr_t> addrs_map;
+  int r = parse_host_map(hostlist, &addrs_map, prefix);
+  if (r >= 0) {
+    if (addrs_map.empty())
       return -ENOENT;
-    for (unsigned i=0; i<addrs.size(); i++) {
-      char n[2];
-      n[0] = 'a' + i;
-      n[1] = 0;
-      if (addrs[i].get_port() == 0)
-	addrs[i].set_port(CEPH_MON_PORT);
-      string name = prefix;
-      name += n;
-      if (!contains(addrs[i]))
-	add(name, addrs[i]);
+
+    for (auto &p : addrs_map) {
+      if (!contains(p.second))
+        add(p.first, p.second);
     }
+
     return 0;
   }
 
@@ -362,6 +399,8 @@ int MonMap::build_from_host_list(std::string hostlist, std::string prefix)
   hosts = resolve_addrs(hostlist.c_str());
   if (!hosts)
     return -EINVAL;
+
+  vector<entity_addr_t> addrs;
   bool success = parse_ip_port_vec(hosts, addrs);
   free(hosts);
   if (!success)
