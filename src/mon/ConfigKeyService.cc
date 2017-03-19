@@ -20,6 +20,7 @@
 #include "mon/ConfigKeyService.h"
 #include "mon/MonitorDBStore.h"
 #include "common/errno.h"
+#include "include/stringify.h"
 
 #define dout_subsys ceph_subsys_mon
 #undef dout_prefix
@@ -186,6 +187,34 @@ bool ConfigKeyService::service_dispatch(MonOpRequestRef op)
     store_list(tmp_ss);
     rdata.append(tmp_ss);
     ret = 0;
+
+  } else if (prefix == "osd destroy") {
+    if (!op->has_op_info()) {
+      dout(10) << __func__
+               << " 'osd destroy' does not have an 'op_info' -- ignore."
+               << dendl;
+      ret = -ENOTSUP;
+      ss << "operation not supported";
+      goto out;
+    }
+
+    if (!mon->is_leader()) {
+      mon->forward_request_leader(op);
+      return true;
+    }
+
+    assert(op->has_op_info());
+    OpInfoDestroyOSD *op_info = op->get_op_info<OpInfoDestroyOSD>();
+    assert(op_info->reply_cb);
+
+    string luks_osd_key =
+      "dm-crypt/osd/" + stringify(op_info->osd_uuid) + "/luks";
+
+    Context *cb = op_info->reply_cb;
+    op_info->reply_cb = nullptr;
+    op->set_op_info(nullptr);
+    store_delete(luks_osd_key, cb);
+    return true;
   }
 
 out:

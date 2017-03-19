@@ -1056,4 +1056,21 @@ struct MonCommand {
 };
 WRITE_CLASS_ENCODER(MonCommand)
 
+class OpInfoDestroyOSD : public MonOpInfo {
+
+public:
+  Monitor *mon;
+  Context *reply_cb;
+  int32_t osd_id;
+  uuid_d osd_uuid;
+
+  OpInfoDestroyOSD(Monitor *m, int32_t id, uuid_d uuid, Context *cb) :
+    mon(m), reply_cb(cb), osd_id(id), osd_uuid(uuid) { }
+
+  ~OpInfoDestroyOSD() override {
+    if (reply_cb)
+      delete reply_cb;
+  }
+};
+
 #endif

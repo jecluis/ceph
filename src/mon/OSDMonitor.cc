@@ -23,6 +23,7 @@
 #include "Monitor.h"
 #include "MDSMonitor.h"
 #include "PGMonitor.h"
+#include "AuthMonitor.h"
 
 #include "MonitorDBStore.h"
 #include "Session.h"
@@ -5642,6 +5643,32 @@ bool OSDMonitor::prepare_command(MonOpRequestRef op)
   return prepare_command_impl(op, cmdmap);
 }
 
+class C_DestroyOSD : public C_MonOp {
+  Monitor *mon;
+
+public:
+  C_DestroyOSD(
+      Monitor *m,
+      MonOpRequestRef op)
+    : C_MonOp(op), mon(m) { }
+
+  ~C_DestroyOSD() override { }
+
+  void _finish(int r) override {
+    if (r < 0) {
+      // let the op's reply callback deal with the error condition.
+      // typically, it will either retry or drop the command.
+      assert(op->has_op_info());
+      OpInfoDestroyOSD *info = op->get_op_info<OpInfoDestroyOSD>();
+      info->reply_cb->complete(r);
+      info->reply_cb = nullptr;
+      op->set_op_info(nullptr);
+      return;
+    }
+    mon->authmon()->dispatch(op);
+  }
+};
+
 bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
 				      map<string,cmd_vartype> &cmdmap)
 {
@@ -6953,6 +6980,70 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       return true;
     }
 
+  } else if (prefix == "osd destroy") {
+    /* Destroying an OSD means that we don't expect to further make use of
+     * the OSDs data (which may even become unreadable after this operation),
+     * and that we are okay with scrubbing all its cephx keys and config-key
+     * data (which may include lockbox keys, thus rendering the osd's data
+     * unreadable).
+     *
+     * The OSD will not be removed. Instead, we will mark it as destroyed,
+     * such that a subsequent call to `create` will not reuse the osd id.
+     * This will play into being able to recreate the OSD, at the same
+     * crush location, with minimal data movement.
+     */
+    int64_t id;
+    if (!cmd_getval(g_ceph_context, cmdmap, "id", id)) {
+      ss << "unable to parse osd id value '"
+         << cmd_vartype_stringify(cmdmap["id"]) << "";
+      err = -EINVAL;
+      goto reply;
+    }
+
+    string sure;
+    if (!cmd_getval(g_ceph_context, cmdmap, "sure", sure) ||
+        sure != "--yes-i-really-mean-it") {
+      ss << "Are you SURE? This will mean real, permanent data loss, as well "
+         << "as cephx and lockbox keys. Pass --yes-i-really-mean-it if you "
+         << "really do.";
+      err = -EPERM;
+      goto reply;
+    } else if (!osdmap.exists(id)) {
+      ss << "osd." << id << " does not exist";
+      err = -ENOENT;
+      goto reply;
+    } else if (!osdmap.get_info(id).lost_at) {
+      ss << "osd." << id << " has not been marked as `lost`.";
+      err = -EBUSY;
+      goto reply;
+    }
+
+    pending_inc.new_state[id] = CEPH_OSD_DESTROYED;
+    // if we zero out the uuid, we won't be able to retry the uuid-dependent
+    // operations, such as the authmon's lockbox key removals. We may need to
+    // run those after we succeed because we may die before getting to them.
+    // *sigh*
+    //pending_inc.new_uuid[id] = uuid_d();
+
+    // perform other required work (e.g., remove cephx keys) after the
+    // proposal goes through. Return to the user only after all the
+    // operations have been finished.
+    rs = "destroyed osd";
+    Context *cb = new Monitor::C_Command(
+        mon, op, 0, rs, get_last_committed() + 1);
+
+    uuid_d uuid = osdmap.get_uuid(id);
+    dout(10) << __func__ << " setting up 'osd destroy' op info for osd."
+             << id << " uuid " << uuid << dendl;
+
+    OpInfoDestroyOSD *op_info =
+      new OpInfoDestroyOSD(mon, id, uuid, cb);
+
+    op->set_op_info(op_info);
+    wait_for_finished_proposal(op, new C_DestroyOSD(mon, op));
+    return true;
+
+  } else if (prefix == "osd purge") {
   } else if (prefix == "osd create") {
     int i = -1;
 

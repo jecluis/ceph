@@ -17,6 +17,7 @@
 #include "mon/AuthMonitor.h"
 #include "mon/Monitor.h"
 #include "mon/MonitorDBStore.h"
+#include "mon/ConfigKeyService.h"
 
 #include "messages/MMonCommand.h"
 #include "messages/MAuth.h"
@@ -26,6 +27,7 @@
 
 #include "auth/AuthServiceHandler.h"
 #include "auth/KeyRing.h"
+#include "include/stringify.h"
 #include "include/assert.h"
 
 #define dout_subsys ceph_subsys_mon
@@ -536,7 +538,8 @@ bool AuthMonitor::preprocess_command(MonOpRequestRef op)
       prefix == "auth get-or-create" ||
       prefix == "auth get-or-create-key" ||
       prefix == "auth import" ||
-      prefix == "auth caps") {
+      prefix == "auth caps" ||
+      prefix == "osd destroy") {
     return false;
   }
 
@@ -664,6 +667,46 @@ int AuthMonitor::import_keyring(KeyRing& keyring)
     dout(30) << "    " << auth_inc.auth << dendl;
     push_cephx_inc(auth_inc);
   }
+  return 0;
+}
+
+class C_AuthDestroyOSD : public C_MonOp {
+  Monitor *mon;
+
+public:
+  C_AuthDestroyOSD(
+      Monitor *m,
+      MonOpRequestRef op)
+    : C_MonOp(op), mon(m) { }
+
+  ~C_AuthDestroyOSD() override { }
+
+  void _finish(int r) override {
+    if (r < 0) {
+      // let the op's reply callback deal with the error condition.
+      // typically, it will either retry or drop the command.
+      assert(op->has_op_info());
+      OpInfoDestroyOSD *info = op->get_op_info<OpInfoDestroyOSD>();
+      info->reply_cb->complete(r);
+      info->reply_cb = nullptr;
+      op->set_op_info(nullptr);
+      return;
+    }
+    mon->config_key_service->dispatch(op);
+  }
+};
+
+int AuthMonitor::remove_entity(const EntityName &entity)
+{
+  dout(10) << __func__ << " " << entity << dendl;
+  if (mon->key_server.contains(entity))
+    return -ENOENT;
+
+  KeyServerData::Incremental auth_inc;
+  auth_inc.name = entity;
+  auth_inc.op = KeyServerData::AUTH_INC_DEL;
+  push_cephx_inc(auth_inc);
+
   return 0;
 }
 
@@ -1014,6 +1057,83 @@ bool AuthMonitor::prepare_command(MonOpRequestRef op)
     wait_for_finished_proposal(op, new Monitor::C_Command(mon, op, 0, rs,
 					      get_last_committed() + 1));
     return true;
+  } else if (prefix == "osd destroy") {
+    dout(10) << __func__ << " destroy osd" << dendl;
+
+    if (!op->has_op_info()) {
+      dout(10) << __func__
+               << " 'osd destroy' does not have an 'op_info' -- ignore."
+               << dendl;
+      err = -ENOTSUP;
+      ss << "operation not supported";
+      goto done;
+    }
+
+    assert(op->has_op_info());
+    OpInfoDestroyOSD *op_info = op->get_op_info<OpInfoDestroyOSD>();
+
+    string osd_cephx_str = "osd." + stringify(op_info->osd_id);
+    string osd_lockbox_str =
+      "client.osd-lockbox." + stringify(op_info->osd_uuid);
+
+    EntityName cephx_entity;
+    EntityName lb_entity;
+
+    do {
+      if (!cephx_entity.from_str(osd_cephx_str)) {
+        dout(10) << __func__ << " invalid cephx entity '" << osd_cephx_str
+          << "'" << dendl;;
+        ss << "invalid cephx key entity";
+        err = -EINVAL;
+        break;
+      }
+
+      if (!lb_entity.from_str(osd_lockbox_str)) {
+        dout(10) << __func__ << " invalid lockbox entity '" << osd_lockbox_str
+          << "'" << dendl;
+        ss << "invalid lockbox key entity";
+        err = -EINVAL;
+        break;
+      }
+
+      bool removed = false;
+
+      err = remove_entity(cephx_entity);
+      if (err == -ENOENT) {
+        dout(10) << __func__ << " " << cephx_entity << " does not exist"
+          << dendl;
+      } else {
+        removed = true;
+      }
+
+      err = remove_entity(lb_entity);
+      if (err == -ENOENT) {
+        dout(10) << __func__ << " " << lb_entity << " does not exist"
+          << dendl;
+      } else {
+        removed = true;
+      }
+
+      if (!removed) {
+        dout(10) << __func__ << " dispatch to config-key service" << dendl;
+        mon->config_key_service->dispatch(op);
+        return false;
+      }
+
+      wait_for_finished_proposal(op,
+          new C_AuthDestroyOSD(mon, op));
+      return true;
+    } while (false);
+
+    // return error directly to the user
+
+    delete op_info->reply_cb;
+    op_info->reply_cb = nullptr;
+    op->set_op_info(nullptr);
+
+    getline(ss, rs, '\0');
+    mon->reply_command(op, err, rs, rdata, get_last_committed());
+    return false;
   }
 
 done:

@@ -158,6 +158,8 @@ private:
   bool prepare_command(MonOpRequestRef op);
 
   bool check_rotate();
+
+  int remove_entity(const EntityName &entity);
  public:
   AuthMonitor(Monitor *mn, Paxos *p, const string& service_name)
     : PaxosService(mn, p, service_name),

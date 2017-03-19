@@ -22,6 +22,14 @@
 #include "mon/Session.h"
 #include "msg/Message.h"
 
+#include <boost/scoped_ptr.hpp>
+
+struct MonOpInfo {
+
+  MonOpInfo() { }
+  virtual ~MonOpInfo() { }
+};
+
 struct MonOpRequest : public TrackedOp {
   friend class OpTracker;
 
@@ -85,6 +93,8 @@ private:
   bool forwarded_to_leader;
   op_type_t op_type;
 
+  boost::scoped_ptr<MonOpInfo> op_info;
+
   MonOpRequest(Message *req, OpTracker *tracker) :
     TrackedOp(tracker,
       req->get_recv_stamp().is_zero() ?
@@ -93,7 +103,8 @@ private:
     session(NULL),
     con(NULL),
     forwarded_to_leader(false),
-    op_type(OP_TYPE_NONE)
+    op_type(OP_TYPE_NONE),
+    op_info(nullptr)
   {
     mark_event("header_read", request->get_recv_stamp());
     mark_event("throttled", request->get_throttle_stamp());
@@ -213,6 +224,24 @@ public:
   }
   bool is_type_command() {
     return (get_op_type() == OP_TYPE_COMMAND);
+  }
+
+  void set_op_info(MonOpInfo *info) {
+    op_info.reset(info);
+  }
+
+  template <class T>
+  T *get_op_info() {
+    T *info = static_cast<T*>(op_info.get());
+    return info;
+  }
+
+  MonOpInfo *get_op_info() {
+    return get_op_info<MonOpInfo>();
+  }
+
+  bool has_op_info() {
+    return op_info != nullptr;
   }
 };
 
