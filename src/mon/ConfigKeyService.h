@@ -21,6 +21,7 @@ class Monitor;
 namespace ceph {
 class Formatter;
 }
+typedef TransactionRef;
 
 class ConfigKeyService : public QuorumService
 {

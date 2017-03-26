@@ -1064,6 +1064,10 @@ bool AuthMonitor::prepare_command(MonOpRequestRef op)
       dout(10) << __func__
                << " 'osd destroy' does not have an 'op_info' -- ignore."
                << dendl;
+      // we typically have asserts always enabled, but in the spirit of
+      // not presuming this will always be like this, let's handle the
+      // error condition nevertheless.
+      assert(op->has_op_info());
       err = -ENOTSUP;
       ss << "operation not supported";
       goto done;
