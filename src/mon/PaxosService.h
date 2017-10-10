@@ -483,7 +483,6 @@ public:
 			  list<pair<health_status_t,string> > *detail,
 			  CephContext *cct) const { }
 
- private:
   /**
    * @defgroup PaxosService_h_store_keys Set of keys that are usually used on
    *					 all the services implementing this
@@ -500,6 +499,7 @@ public:
    * @}
    */
 
+ private:
   /**
    * @defgroup PaxosService_h_version_cache Variables holding cached values
    *                                        for the most used versions (first

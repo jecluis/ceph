@@ -67,7 +67,7 @@
 #define dout_subsys ceph_subsys_mon
 #undef dout_prefix
 #define dout_prefix _prefix(_dout, mon, osdmap)
-static ostream& _prefix(std::ostream *_dout, Monitor *mon, OSDMap& osdmap) {
+static ostream& _prefix(std::ostream *_dout, Monitor *mon, const OSDMap& osdmap) {
   return *_dout << "mon." << mon->name << "@" << mon->rank
 		<< "(" << mon->get_state_name()
 		<< ").osd e" << osdmap.get_epoch() << " ";
@@ -77,6 +77,7 @@ OSDMonitor::OSDMonitor(CephContext *cct, Monitor *mn, Paxos *p, const string& se
  : PaxosService(mn, p, service_name),
    inc_osd_cache(g_conf->mon_osd_cache_size),
    full_osd_cache(g_conf->mon_osd_cache_size),
+   has_osdmap_manifest(false),
    thrash_map(0), thrash_last_up_osd(-1),
    op_tracker(cct, true, 1)
 {}
@@ -101,6 +102,10 @@ void OSDMonitor::_get_pending_crush(CrushWrapper& newcrush)
 
   bufferlist::iterator p = bl.begin();
   newcrush.decode(p);
+}
+
+void OSDMonitor::init()
+{
 }
 
 void OSDMonitor::create_initial()
@@ -144,6 +149,26 @@ void OSDMonitor::update_from_paxos(bool *need_bootstrap)
   dout(15) << "update_from_paxos paxos e " << version
 	   << ", my e " << osdmap.epoch << dendl;
 
+  bool store_has_manifest =
+    mon->store->exists(get_service_name(), "full_manifest");
+
+  if (!store_has_manifest && has_osdmap_manifest) {
+    osdmap_manifest = osdmap_manifest_t();
+  } else if (store_has_manifest) {
+    bufferlist manifest_bl;
+    int r = get_value("full_manifest", manifest_bl);
+    if (r < 0) {
+      derr << __func__ << " unable to read osdmap version manifest" << dendl;
+      assert(0 == "error reading manifest");
+    }
+    osdmap_manifest.decode(manifest_bl);
+    has_osdmap_manifest = true;
+
+    dout(10) << __func__ << " store osdmap manifest last pinned "
+             << osdmap_manifest.get_last_pinned()
+             << " last pruned " << osdmap_manifest.last_pruned
+             << dendl;
+  }
 
   /*
    * We will possibly have a stashed latest that *we* wrote, and we will
@@ -1161,7 +1186,6 @@ int OSDMonitor::prime_pg_temp(OSDMap& next, PGMap *pg_map, int osd)
   return num;
 }
 
-
 /**
  * @note receiving a transaction in this function gives a fair amount of
  * freedom to the service implementation if it does need it. It shouldn't.
@@ -1170,6 +1194,11 @@ void OSDMonitor::encode_pending(MonitorDBStore::TransactionRef t)
 {
   dout(10) << "encode_pending e " << pending_inc.epoch
 	   << dendl;
+
+  if (do_prune(t)) {
+    dout(1) << __func__ << " osdmap full prune encoded e"
+            << pending_inc.epoch << dendl;
+  }
 
   // finalize up pending_inc
   pending_inc.modified = ceph_clock_now(g_ceph_context);
@@ -1362,7 +1391,334 @@ void OSDMonitor::encode_trim_extra(MonitorDBStore::TransactionRef tx,
   bufferlist bl;
   get_version_full(first, bl);
   put_version_full(tx, first, bl);
+
+  if (has_osdmap_manifest &&
+      first > osdmap_manifest.get_first_pinned()) {
+    bufferlist manifest_bl;
+    _prune_update_trimmed(first, &manifest_bl);
+    tx->put(get_service_name(), "full_manifest", manifest_bl);
+  }
 }
+
+
+/* prune */
+
+/*
+ * ---------------------------------------------------------------
+ * |10|11|..|100|..|1000|..|10000|..|100000|..|100500|100501|..|n|
+ * ---------------------------------------------------------------
+ *  ^ first                                                last ^
+ *
+ *
+ * We will prune when all the following constraints are met:
+ *
+ * 1. number of versions is greater than `mon_min_osdmap_epochs`
+ *
+ * 2. the number of versions between first and last is greater than
+ *    `mon_osdmap_full_prune_min`
+ *
+ * If any of these conditions fails, we will *not* prune any maps.
+ *
+ *
+ * Pruning maps will create gaps in the sequence of full maps. The size
+ * of these gaps will be defined by `mon_osdmap_full_prune_interval`,
+ * which by default is `10`. In reality this means we will pin one map
+ * (i.e., make sure it is not pruned) every `x` versions, and remove the
+ * maps in-between. So, for a map sequence such as
+ *
+ *   |10|11|12|13|..|19|20|
+ *
+ * we would pin map epochs `10` and `20`, and remove the 9 maps in-between.
+ *
+ * The pruned maps will be rebuilt on-demand using the incremental maps we
+ * keep in the store, which will be sequencially applied on the closest
+ * earliest full map we have pinned, or a closer map in the osdmap cache.
+ *
+ * Because we don't want to
+ *
+ * In the event of pruning being needed, we will create gaps in the
+ * sequence of maps
+ *
+ * ---------------------------------------------------------
+ * |10|20|30|..|100|110|..|100480|100490|100500|100501|..|n|
+ * ---------------------------------------------------------
+ *  ^ first                                          last ^
+ */
+
+bool OSDMonitor::_should_prune(
+    version_t first,
+    version_t last) const
+{
+  int32_t num_versions = last - first;
+  assert(num_versions >= 0);
+
+  if (num_versions < g_conf->mon_osdmap_full_prune_min) {
+
+    // we no longer need to prune versions. Check if we still have pinned
+    // maps around. If so, return true; if not, return false and let
+    // the caller clear out the manifest.
+
+    if (!has_osdmap_manifest) {
+      // nothing to be done; move along, nothing to see.
+      return false;
+    }
+
+    // if `last_pinned` is greater than the first committed map, then
+    // there is nothing to prune - and the caller should drop the
+    // manifest. Otherwise, we should continue with prunning, if it is
+    // still necessary.
+    return (osdmap_manifest.last_pinned > first);
+  }
+
+  if (num_versions < g_conf->mon_min_osdmap_epochs) {
+    dout(1) << __func__
+            << " we haven't crossed the minimum number of osdmap versions --"
+            << " don't prune versions."
+            << dendl;
+    return false;
+  }
+
+  // if all else failed, default to whatever we have on the config, and let
+  // the caller make additional decisions.
+  return g_conf->mon_osdmap_full_prune_enabled;
+}
+
+version_t OSDMonitor::_prune_interval(
+    MonitorDBStore::TransactionRef t,
+    version_t first,
+    version_t last)
+{
+  dout(10) << __func__
+           << " interval [" << first << ".." << last << "]" << dendl;
+  for (version_t v = first; v <= last; ++v) {
+
+    dout(20) << __func__ << "    prunning osdmap full v" << v << dendl;
+    string full_key = mon->store->combine_strings("full", v);
+    t->erase(get_service_name(), v);
+  }
+
+  return last;
+}
+
+void OSDMonitor::_prune_update_trimmed(
+    version_t first,
+    bufferlist* bl)
+{
+  dout(10) << __func__
+           << " first " << first
+           << " last_pinned " << osdmap_manifest.last_pinned
+           << " last_pruned " << osdmap_manifest.last_pruned
+           << dendl;
+
+  if (!osdmap_manifest.is_pinned(first)) {
+    osdmap_manifest.pinned.insert(first);
+  }
+
+  set<version_t>::iterator p_end = osdmap_manifest.pinned.find(first);
+  set<version_t>::iterator p = osdmap_manifest.pinned.begin();
+  osdmap_manifest.pinned.erase(p, p_end);
+  osdmap_manifest.last_pinned = first;
+
+  if (osdmap_manifest.last_pruned <= first) {
+    osdmap_manifest.last_pruned = 0;
+  }
+
+  if (bl) {
+    osdmap_manifest.encode(*bl);
+  }
+}
+
+/** do_prune
+ *
+ * @returns true if has side-effects; false otherwise.
+ */
+bool OSDMonitor::do_prune(MonitorDBStore::TransactionRef tx)
+{
+  dout(1) << __func__ << " osdmap full prune "
+          << (g_conf->mon_osdmap_full_prune_enabled > 0 ?
+              "enabled" : "disabled")
+          << dendl;
+
+  version_t first = get_value(first_committed_name);
+  version_t last = get_value(last_committed_name);
+
+  bool should_prune = _should_prune(first, last);
+
+  if (!should_prune) {
+    if (osdmap_manifest.last_pinned > first) {
+      // assume we are not okay to prune yet, and return.
+      return false;
+    }
+
+    // we need to drop the manifest because we no longer need prunning.
+    tx->erase(get_service_name(), "full_manifest");
+    return true;
+  }
+
+  dout(0) << "WARNING: osdmap full version prune enabled!" << dendl;
+
+  // we are beyond the minimum prune versions, we need to remove maps because
+  // otherwise the store will grow unbounded and we may end up having issues
+  // with available disk space or store hangs.
+
+  // we will not pin all versions. We will leave a buffer number of versions.
+  // this allows us the monitor to trim maps without caring too much about
+  // pinned maps, and then allow us to use another ceph-mon without these
+  // capabilities, without having to repair the store.
+  version_t last_to_pin = last - g_conf->mon_min_osdmap_epochs;
+  version_t last_pinned = osdmap_manifest.get_last_pinned();
+  version_t last_pruned = osdmap_manifest.last_pruned;
+  int32_t prune_interval = g_conf->mon_osdmap_full_prune_interval;
+
+  bool pin_maps = false;
+
+  if (last_pinned == 0) {
+    // also, the manifest is empty, so we need to populate it accordingly.
+
+    // we should not hit this, but right now I'm not looking into making us
+    // recover from such a scenario. This should be improved.
+    assert(osdmap_manifest.pinned.empty());
+
+    // pin every `mon_osdmap_full_prune_interval` version
+    last_pinned = first;
+    pin_maps = true;
+
+  } else if (last_pruned + prune_interval > last_pinned) {
+
+    dout(10) << __func__
+             << " last_pinned " << last_pinned
+             << " last_pruned " << last_pruned
+             << " prune_interval " << prune_interval
+             << dendl;
+
+    // we already have a manifest; we need to check whether we need to prune
+    // additional versions, or if we are good as we are.
+
+    if (last < last_pinned + g_conf->mon_osdmap_full_prune_min) {
+      // we don't have enough versions to issue a prune
+      dout(1) << __func__
+              << " not enough versions to prune (last committed: "
+              << last << ", last pinned: " << last_pinned
+              << ", cutoff: " << g_conf->mon_osdmap_full_prune_min << ")"
+              << dendl;
+      return false;
+    }
+
+    if (last < last_to_pin + g_conf->mon_osdmap_full_prune_interval) {
+      // we don't have enough versions past `last_to_pin` to form a new
+      // interval.
+      dout(1) << __func__
+              << " not enough versions past `last to pin` to form an interval"
+              << " (last to pin: " << last_to_pin << ", last committed: "
+              << last << ", interval size: "
+              << g_conf->mon_osdmap_full_prune_interval << ")"
+              << dendl;
+      return false;
+    }
+
+    dout(10) << __func__
+             << " pin additional maps (last_pinned " << last_pinned
+             << " last_pruned " << last_pruned << ")" << dendl;
+
+    pin_maps = true;
+
+  } else if (last_pinned < last_to_pin) {
+    // a trim happened; we need to pin new maps.
+    pin_maps = true;
+  }
+
+  if (pin_maps) {
+    // pin maps.
+    version_t pin = last_pinned;
+    do {
+      dout(5) << __func__ << " pin version " << pin << dendl;
+      osdmap_manifest.pinned.insert(pin);
+      pin += g_conf->mon_osdmap_full_prune_interval;
+    } while (pin <= last_to_pin);
+
+    // pin the last epoch -- this may mean we are reducing some intervals
+    // but it feels simpler and safer than calculating some more stuff here
+    dout(5) << __func__ << " pin last version " << last_to_pin << dendl;
+    osdmap_manifest.pinned.insert(last_to_pin);
+    osdmap_manifest.last_pinned = last_to_pin;
+  }
+
+  // we need to get rid of some osdmaps
+
+  version_t last_to_prune = osdmap_manifest.get_last_pinned();
+  int32_t num_pruned = 0;
+
+  dout(5) << __func__ << " last_pruned " << last_pruned
+          << " last_to_prune " << last_to_prune << dendl;
+
+  if (last_pruned == 0) {
+    version_t first_pinned = osdmap_manifest.get_first_pinned();
+    dout(50) << __func__ << " last_pruned unset - use first pinned "
+             << first_pinned << dendl;
+    last_pruned = first_pinned;
+  }
+
+  for (version_t v = last_pruned+1; v <= last_to_prune; ++v) {
+
+    if (osdmap_manifest.is_pinned(v)) {
+      continue;
+    }
+
+    version_t lower = osdmap_manifest.get_lower_closest_pinned(v);
+    version_t upper = osdmap_manifest.get_upper_closest_pinned(v);
+
+    if (lower == 0 && last_pruned == 0) {
+      // we have never pruned; start now.
+      lower = osdmap_manifest.get_first_pinned();
+      upper = osdmap_manifest.get_upper_closest_pinned(lower);
+    }
+
+    if (upper - lower <= 1) {
+      dout(10) << __func__ << " nothing to prune for interval"
+               << " [" << lower << ".." << upper << "]"
+               << dendl;
+      continue;
+    }
+
+    if (lower == 0 || upper == 0) {
+      dout(10) << __func__ << " done with pruning, last_pruned "
+               << last_pruned << dendl;
+      break;
+    }
+
+    version_t prune_first = lower + 1;
+    version_t prune_last = upper - 1;
+
+    assert(!osdmap_manifest.is_pinned(prune_first) &&
+           !osdmap_manifest.is_pinned(prune_last));
+
+    if (prune_last > last_to_prune) {
+      prune_last = last_to_prune;
+    }
+
+    last_pruned = _prune_interval(tx, prune_first, prune_last);
+    assert(!osdmap_manifest.is_pinned(last_pruned));
+    v = last_pruned;
+
+    num_pruned += (last_pruned - prune_first);
+    if (num_pruned > g_conf->mon_osdmap_full_prune_txsize) {
+      dout(10) << __func__ << " reached prune txsize " << num_pruned
+               << " max " << g_conf->mon_osdmap_full_prune_txsize << dendl;
+      break;
+    }
+  }
+
+  assert(num_pruned > 0);
+  assert(last_pruned <= osdmap_manifest.get_last_pinned());
+  osdmap_manifest.last_pruned = last_pruned;
+
+  bufferlist bl;
+  osdmap_manifest.encode(bl);
+  tx->put(get_service_name(), "full_manifest", bl);
+
+  return true;
+}
+
 
 // -------------
 
@@ -2689,16 +3045,132 @@ int OSDMonitor::get_version(version_t ver, bufferlist& bl)
     return ret;
 }
 
+int OSDMonitor::get_inc(version_t ver, OSDMap::Incremental& inc)
+{
+  bufferlist inc_bl;
+  int err = get_version(ver, inc_bl);
+  assert(err == 0);
+  assert(inc_bl.length());
+
+  bufferlist::iterator p = inc_bl.begin();
+  inc.decode(p);
+  dout(10) << __func__ << "     "
+           << " epoch " << inc.epoch
+           << " inc_crc " << inc.inc_crc
+           << " full_crc " << inc.full_crc
+           << " encode_features " << inc.encode_features << dendl;
+  return 0;
+}
+
+int OSDMonitor::get_full_from_pinned_map(version_t ver, bufferlist& bl)
+{
+  dout(10) << __func__ << " ver " << ver << dendl;
+
+  version_t closest_pinned = osdmap_manifest.get_lower_closest_pinned(ver);
+  if (closest_pinned == 0) {
+    return -ENOENT;
+  }
+  if (closest_pinned > ver) {
+    dout(0) << __func__ << " pinned: " << osdmap_manifest.pinned << dendl;
+  }
+  assert(closest_pinned <= ver);
+
+  dout(10) << __func__ << " closest pinned ver " << closest_pinned << dendl;
+
+  // get osdmap incremental maps and apply on top of this one.
+  bufferlist osdm_bl;
+  bool has_cached_osdmap = false;
+  for (version_t v = ver-1; v >= closest_pinned; --v) {
+    if (full_osd_cache.lookup(v, &osdm_bl)) {
+      dout(10) << __func__ << " found map in cache ver " << v << dendl;
+      closest_pinned = v;
+      has_cached_osdmap = true;
+      break;
+    }
+  }
+
+  if (!has_cached_osdmap) {
+    int err = PaxosService::get_version_full(closest_pinned, osdm_bl);
+    if (err != 0) {
+      derr << __func__ << " closest pinned map ver " << closest_pinned
+           << " not available! error: " << cpp_strerror(err) << dendl;
+    }
+    assert(err == 0);
+  }
+
+  assert(osdm_bl.length());
+
+  OSDMap *osdm = new OSDMap();
+  osdm->decode(osdm_bl);
+
+  dout(10) << __func__ << " loaded osdmap epoch " << closest_pinned
+           << " e" << osdm->epoch
+           << " crc " << osdm->get_crc()
+           << " -- applying incremental maps." << dendl;
+
+  uint64_t encode_features = 0;
+  for (version_t v = closest_pinned + 1; v <= ver; ++v) {
+    dout(20) << __func__ << "    applying inc epoch " << v << dendl;
+
+    OSDMap::Incremental inc;
+    int err = get_inc(v, inc);
+    assert(err == 0);
+
+    err = osdm->apply_incremental(inc);
+    assert(err == 0);
+
+    encode_features = inc.encode_features;
+    if (!encode_features) {
+      dout(10) << __func__
+               << " last incremental map didn't have features;"
+               << " defaulting to quorum's or all" << dendl;
+      encode_features = mon->quorum_features ? mon->quorum_features : -1;
+    }
+
+    if (!inc.full_crc) {
+      continue;
+    }
+
+    OSDMap *tosdm = new OSDMap();
+    bufferlist tbl;
+
+    osdm->encode(tbl, encode_features | CEPH_FEATURE_RESERVED);
+    tosdm->decode(tbl);
+    delete osdm;
+    osdm = tosdm;
+
+    if (inc.full_crc && osdm->get_crc() != inc.full_crc) {
+      derr << __func__
+           << "    osdmap crc mismatch! (osdmap crc " << osdm->get_crc()
+           << ", expected " << inc.full_crc << ")" << dendl;
+      assert(0 == "osdmap crc mismatch");
+    }
+  }
+
+  osdm->encode(bl, encode_features | CEPH_FEATURE_RESERVED);
+  delete osdm;
+
+  return 0;
+}
+
 int OSDMonitor::get_version_full(version_t ver, bufferlist& bl)
 {
     if (full_osd_cache.lookup(ver, &bl)) {
       return 0;
     }
     int ret = PaxosService::get_version_full(ver, bl);
-    if (!ret) {
-      full_osd_cache.add(ver, bl);
+    if (ret == -ENOENT) {
+      // build map?
+      ret = get_full_from_pinned_map(ver, bl);
+      if (ret != 0) {
+        return ret;
+      }
+    } else if (ret != 0) {
+      return ret;
     }
-    return ret;
+
+    full_osd_cache.add(ver, bl);
+    return 0;
 }
 
 epoch_t OSDMonitor::blacklist(const entity_addr_t& a, utime_t until)

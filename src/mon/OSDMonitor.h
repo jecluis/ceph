@@ -117,6 +117,87 @@ struct failure_info_t {
   }
 };
 
+struct osdmap_manifest_t {
+  // all the maps we have pinned -- i.e., won't be removed unless
+  // they are inside a trim interval.
+  set<version_t> pinned;
+  // last version we've pinned
+  version_t last_pinned;
+  // the last pruned version
+  version_t last_pruned;
+
+  osdmap_manifest_t() : last_pinned(0), last_pruned(0) { }
+
+  version_t get_last_pinned() const
+  {
+    set<version_t>::const_reverse_iterator it = pinned.crbegin();
+    assert(it == pinned.crend() || *it == last_pinned);
+    return last_pinned;
+  }
+
+  version_t get_first_pinned() const
+  {
+    set<version_t>::const_iterator it = pinned.cbegin();
+    return *it;
+  }
+
+  bool is_pinned(version_t v) const
+  {
+    return pinned.find(v) != pinned.end();
+  }
+
+  version_t get_lower_closest_pinned(version_t v) const
+  {
+    set<version_t>::const_iterator p = pinned.lower_bound(v);
+    if (p == pinned.cend()) {
+      return 0;
+    }
+
+    if (*p > v) {
+      if (p == pinned.cbegin()) {
+        return 0;
+      }
+      --p;
+    }
+
+    return *p;
+  }
+
+  version_t get_upper_closest_pinned(version_t v) const
+  {
+    set<version_t>::const_iterator p = pinned.upper_bound(v);
+    if (p == pinned.cend()) {
+      return 0;
+    }
+    return *p;
+  }
+
+  void encode(bufferlist& bl) const
+  {
+    ENCODE_START(1, 1, bl);
+    ::encode(pinned, bl);
+    ::encode(last_pinned, bl);
+    ::encode(last_pruned, bl);
+    ENCODE_FINISH(bl);
+  }
+
+  void decode(bufferlist::iterator& bl)
+  {
+    DECODE_START(1, bl);
+    ::decode(pinned, bl);
+    ::decode(last_pinned, bl);
+    ::decode(last_pruned, bl);
+    DECODE_FINISH(bl);
+  }
+
+  void decode(bufferlist& bl) {
+    bufferlist::iterator p = bl.begin();
+    decode(p);
+  }
+
+};
+WRITE_CLASS_ENCODER(osdmap_manifest_t);
+
 class OSDMonitor : public PaxosService {
 public:
   OSDMap osdmap;
@@ -133,6 +214,9 @@ private:
 
   SimpleLRU<version_t, bufferlist> inc_osd_cache;
   SimpleLRU<version_t, bufferlist> full_osd_cache;
+
+  bool has_osdmap_manifest;
+  osdmap_manifest_t osdmap_manifest;
 
   bool check_failures(utime_t now);
   bool check_failure(utime_t now, int target_osd, failure_info_t& fi);
@@ -154,7 +238,8 @@ private:
   };
 
   // svc
-public:  
+public:
+  void init() override;
   void create_initial();
 private:
   void update_from_paxos(bool *need_bootstrap);
@@ -162,6 +247,16 @@ private:
   void encode_pending(MonitorDBStore::TransactionRef t);
   void on_active();
   void on_shutdown();
+
+  bool _should_prune(version_t first, version_t last) const;
+  version_t _prune_interval(
+      MonitorDBStore::TransactionRef t,
+      version_t first,
+      version_t last);
+  void _prune_update_trimmed(
+      version_t first,
+      bufferlist* bl);
+  bool do_prune(MonitorDBStore::TransactionRef tx);
   /**
    * we haven't delegated full version stashing to paxosservice for some time
    * now, making this function useless in current context.
@@ -430,6 +525,8 @@ private:
 
   int get_version(version_t ver, bufferlist& bl) override;
   int get_version_full(version_t ver, bufferlist& bl) override;
+  int get_inc(version_t ver, OSDMap::Incremental& inc);
+  int get_full_from_pinned_map(version_t ver, bufferlist& bl);
 
   epoch_t blacklist(const entity_addr_t& a, utime_t until);
 
