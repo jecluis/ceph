@@ -117,6 +117,66 @@ struct failure_info_t {
   }
 };
 
+struct osdmap_manifest_t {
+  // all the maps we have pinned -- i.e., won't be removed unless
+  // they are inside a trim interval.
+  set<version_t> pinned;
+  // last version we've pinned
+  version_t last_pinned;
+  // the last pinned map up until which we have pruned.
+  version_t last_pruned;
+
+  osdmap_manifest_t() : last_pinned(0), last_pruned(0) { }
+
+  version_t get_last_pinned() const
+  {
+    set<version_t>::const_reverse_iterator it = pinned.crbegin();
+    assert(it == pinned.crend() || *it == last_pinned);
+    return last_pinned;
+  }
+
+  version_t get_first_pinned() const
+  {
+    set<version_t>::const_iterator it = pinned.cbegin();
+    return *it;
+  }
+
+  set<version_t>::const_iterator get_prune_begin() const
+  {
+    return pinned.lower_bound(last_pruned);
+  }
+
+  set<version_t>::const_iterator get_prune_end() const
+  {
+    return pinned.cend();
+  }
+
+  void encode(bufferlist& bl) const
+  {
+    ENCODE_START(1, 1, bl);
+    ::encode(pinned, bl);
+    ::encode(last_pinned, bl);
+    ::encode(last_pruned, bl);
+    ENCODE_FINISH(bl);
+  }
+
+  void decode(bufferlist::iterator& bl)
+  {
+    DECODE_START(1, bl);
+    ::decode(pinned, bl);
+    ::decode(last_pinned, bl);
+    ::decode(last_pruned, bl);
+    DECODE_FINISH(bl);
+  }
+
+  void decode(bufferlist& bl) {
+    bufferlist::iterator p = bl.begin();
+    decode(p);
+  }
+
+};
+WRITE_CLASS_ENCODER(osdmap_manifest_t);
+
 class OSDMonitor : public PaxosService {
 public:
   OSDMap osdmap;
@@ -133,6 +193,9 @@ private:
 
   SimpleLRU<version_t, bufferlist> inc_osd_cache;
   SimpleLRU<version_t, bufferlist> full_osd_cache;
+
+  bool using_osdmap_version_cutoff;
+  osdmap_manifest_t osdmap_manifest;
 
   bool check_failures(utime_t now);
   bool check_failure(utime_t now, int target_osd, failure_info_t& fi);
@@ -154,7 +217,8 @@ private:
   };
 
   // svc
-public:  
+public:
+  void init() override;
   void create_initial();
 private:
   void update_from_paxos(bool *need_bootstrap);

@@ -77,6 +77,7 @@ OSDMonitor::OSDMonitor(CephContext *cct, Monitor *mn, Paxos *p, const string& se
  : PaxosService(mn, p, service_name),
    inc_osd_cache(g_conf->mon_osd_cache_size),
    full_osd_cache(g_conf->mon_osd_cache_size),
+   using_osdmap_version_cutoff(false),
    thrash_map(0), thrash_last_up_osd(-1),
    op_tracker(cct, true, 1)
 {}
@@ -101,6 +102,238 @@ void OSDMonitor::_get_pending_crush(CrushWrapper& newcrush)
 
   bufferlist::iterator p = bl.begin();
   newcrush.decode(p);
+}
+
+void OSDMonitor::init()
+{
+  dout(1) << __func__ << " version cutoff enabled = "
+          << g_conf->mon_osdmap_version_cutoff_enable
+          << dendl;
+
+  version_t first = get_value(first_committed_name);
+  version_t last = get_value(last_committed_name);
+
+  bool has_manifest = false;
+
+  if (mon->store->exists(get_service_name(), "full_manifest")) {
+    bufferlist manifest_bl;
+    int r = get_value("full_manifest", manifest_bl);
+    if (r < 0) {
+      derr << __func__ << " unable to read osdmap version manifest" << dendl;
+      assert(0 == "error reading manifest");
+    }
+    osdmap_manifest.decode(manifest_bl);
+    has_manifest = true;
+  }
+
+  using_osdmap_version_cutoff = g_conf->mon_osdmap_version_cutoff_enable;
+
+  int32_t num_versions = last - first;
+  assert(num_versions >= 0);
+  if (num_versions < g_conf->mon_osdmap_version_cutoff) {
+
+    // we no longer need to prune versions. Check if we still have pinned
+    // maps around. If so, force using_osdmap_version_cutoff; if not, clear
+    // out the manifest.
+
+    if (!has_manifest) {
+      // nothing to be done, proceed
+      return;
+    }
+
+    if (osdmap_manifest.last_pinned <= first) {
+      // we can get rid of the manifest and disable version cutoff
+      dout(0) << __func__
+              << " disabling version cutoff because we don't have enough"
+              << " versions, nor pinned maps." << dendl;
+      using_osdmap_version_cutoff = false;
+      osdmap_manifest = osdmap_manifest_t();
+      dout(0) << __func__
+              << " removing osdmap manifest from store" << dendl;
+      MonitorDBStore::TransactionRef t(new MonitorDBStore::Transaction);
+      t->erase(get_service_name(), "full_manifest");
+      int r = mon->store->apply_transaction(t);
+      if (r < 0) {
+        derr << __func__ << " error removing osdmap manifest from store: "
+             << cpp_strerror(r) << dendl;
+      }
+      return;
+    } else {
+      dout(0) << __func__
+              << " forcing version cutoff because we still have pinned maps"
+              << dendl;
+      using_osdmap_version_cutoff = true;
+      return;
+    }
+  }
+
+  if (num_versions < g_conf->mon_min_osdmap_epochs) {
+    dout(1) << __func__
+            << " we haven't crossed the minimum number of osdmap versions --"
+            << " don't prune versions."
+            << dendl;
+    return;
+  }
+
+  if (!using_osdmap_version_cutoff) {
+    dout(5) << __func__ << " not using version cutoff." << dendl;
+    return;
+  }
+
+  dout(0) << "WARNING: osdmap version cutoff enabled!" << dendl;
+
+  // we are beyond the cut-off, we need to remove maps because
+  // otherwise the store will grow unbounded and we may end up
+  // having issues with available disk space or store hangs.
+  //
+
+  // we will not pin all versions. We will leave a buffer number of versions.
+  // this allows us the monitor to trim maps without caring too much about
+  // pinned maps, and then allow us to use another ceph-mon without these
+  // capabilities, without having to repair the store.
+  version_t last_to_pin = last - g_conf->mon_min_osdmap_epochs;
+  version_t last_pinned = 0; // placeholder; we'll rewrite it below.
+
+  if (osdmap_manifest.get_last_pinned() == 0) {
+    // also, the manifest is empty, so we need to populate it accordingly.
+
+    // we should not hit this, but right now I'm not looking into making us
+    // recover from such a scenario. This should be improved.
+    assert(osdmap_manifest.pinned.empty());
+
+    // pin every `mon_osdmap_version_cutoff_interval` version
+    last_pinned = first;
+
+  } else {
+
+    // we already have a manifest; we need to check whether we need to prune
+    // additional versions, or if we are good as we are.
+
+    last_pinned = osdmap_manifest.get_last_pinned();
+
+    if (last < last_pinned + g_conf->mon_osdmap_version_cutoff) {
+      // we don't have enough versions to issue a prune
+      dout(1) << __func__
+              << " not enough versions to prune (last committed: "
+              << last << ", last pinned: " << last_pinned
+              << ", cutoff: " << g_conf->mon_osdmap_version_cutoff << ")"
+              << dendl;
+      return;
+    }
+
+    if (last < last_to_pin + g_conf->mon_osdmap_version_cutoff_interval) {
+      // we don't have enough versions past `last_to_pin` to form a new
+      // interval.
+      dout(1) << __func__
+              << " not enough versions past `last to pin` to form an interval"
+              << " (last to pin: " << last_to_pin << ", last committed: "
+              << last << ", interval size: "
+              << g_conf->mon_osdmap_version_cutoff_interval << ")"
+              << dendl;
+      return;
+    }
+  }
+
+  {
+    // pin maps.
+    version_t pin = last_pinned;
+    do {
+      dout(5) << __func__ << " pin version " << pin << dendl;
+      osdmap_manifest.pinned.insert(pin);
+      pin += g_conf->mon_osdmap_version_cutoff_interval;
+    } while (pin <= last_to_pin);
+
+    // pin the last epoch -- this may mean we are reducing some intervals
+    // but it feels simpler and safer than calculating some more stuff here
+    dout(5) << __func__ << " pin last version " << last_to_pin << dendl;
+    osdmap_manifest.pinned.insert(last_to_pin);
+    osdmap_manifest.last_pinned = last_to_pin;
+  }
+
+  // we need to get rid of some osdmaps
+
+  // we will get an iterator for the last map we pinned during the last prune,
+  // if available (in which case, we'll get the first pinned map).
+  set<version_t>::const_iterator prune_it = osdmap_manifest.get_prune_begin();
+  set<version_t>::const_iterator prune_end = osdmap_manifest.get_prune_end();
+
+  assert(*prune_it == osdmap_manifest.last_pruned ||
+         *prune_it == osdmap_manifest.get_first_pinned());
+
+  do {
+    // do multiple transactions if need be.
+
+    MonitorDBStore::TransactionRef t(new MonitorDBStore::Transaction);
+    version_t tmp_last_pruned = 0;
+    bool commit_tx = false;
+
+    // run until the end of the pinned map versions
+    while (prune_it != prune_end) {
+      // prune interval [pinned_first_v+1..pinned_last_v-1]
+      version_t pinned_first_v = *prune_it;
+      ++prune_it;
+
+      version_t prune_first = pinned_first_v + 1;
+      if (prune_it == prune_end) {
+        dout(1) << __func__ << " reached prune end; last possible"
+                << " prune version " << prune_first
+                << ", pinned " << pinned_first_v << dendl;
+        assert(pinned_first_v == tmp_last_pruned);
+        break;
+      }
+      version_t pinned_last_v = *prune_it;
+      version_t prune_last = pinned_last_v - 1;
+      assert(pinned_last_v > pinned_first_v);
+
+      if (pinned_last_v - pinned_first_v == 1) {
+        // nothing to prune for this interval
+        dout(5) << __func__
+                << " nothing to prune for interval ("
+                << pinned_first_v << ".." << pinned_last_v << ")" << dendl;
+        continue;
+      }
+
+      dout(5) << __func__
+              << " pruning interval [" << prune_first << ".." << prune_last
+              << "]" << dendl;
+
+      commit_tx = true;
+      tmp_last_pruned = pinned_last_v;
+      assert(osdmap_manifest.pinned.count(tmp_last_pruned) == 1);
+      for (version_t v = prune_first; v <= prune_last; ++v) {
+        dout(20) << __func__ << "    prunning osdmap full v" << v << dendl;
+        string full_key = mon->store->combine_strings("full", v);
+        if (mon->store->exists(get_service_name(), full_key)) {
+          t->erase(get_service_name(), full_key);
+        }
+      }
+
+      if (t->size() > (uint32_t)g_conf->mon_osdmap_version_cutoff_txsize) {
+        break;
+      }
+
+    }
+
+    if (commit_tx) {
+      assert(!t->empty());
+
+      osdmap_manifest.last_pruned = tmp_last_pruned;
+      bufferlist manifest_bl;
+      osdmap_manifest.encode(manifest_bl);
+      t->put(get_service_name(), "full_manifest", manifest_bl);
+      int r = mon->store->apply_transaction(t);
+      if (r < 0) {
+        derr << __func__ << " error writing tx to db: " << cpp_strerror(r)
+             << dendl;
+        assert(0 == "failed writing tx");
+      }
+      dout(1) << __func__ << " committed tx with last_pruned " << tmp_last_pruned
+              << dendl;
+    }
+
+  } while (prune_it != prune_end);
+
+  assert(osdmap_manifest.last_pruned == osdmap_manifest.last_pinned);
 }
 
 void OSDMonitor::create_initial()
