@@ -151,6 +151,15 @@ struct osdmap_manifest_t {
     return pinned.cend();
   }
 
+  version_t get_closest_pinned(version_t ver) const
+  {
+    set<version_t>::const_iterator p = pinned.lower_bound(ver);
+    if (p == pinned.cend()) {
+      return 0;
+    }
+    return *p;
+  }
+
   void encode(bufferlist& bl) const
   {
     ENCODE_START(1, 1, bl);
@@ -494,6 +503,7 @@ private:
 
   int get_version(version_t ver, bufferlist& bl) override;
   int get_version_full(version_t ver, bufferlist& bl) override;
+  int get_full_from_pinned_map(version_t ver, bufferlist& bl);
 
   epoch_t blacklist(const entity_addr_t& a, utime_t until);
 

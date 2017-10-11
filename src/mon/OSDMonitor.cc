@@ -2922,16 +2922,84 @@ int OSDMonitor::get_version(version_t ver, bufferlist& bl)
     return ret;
 }
 
+int OSDMonitor::get_full_from_pinned_map(version_t ver, bufferlist& bl)
+{
+  dout(10) << __func__ << " ver " << ver << dendl;
+
+  version_t closest_pinned = osdmap_manifest.get_closest_pinned(ver);
+  if (closest_pinned == 0) {
+    return -ENOENT;
+  }
+
+  dout(10) << __func__ << " closest pinned ver " << closest_pinned << dendl;
+
+  // get osdmap incremental maps and apply on top of this one.
+  bufferlist osdm_bl;
+  int err = PaxosService::get_version_full(closest_pinned, osdm_bl);
+  if (err != 0) {
+    derr << __func__ << " closest pinned map ver " << closest_pinned
+         << " not available! error: " << cpp_strerror(err) << dendl;
+  }
+  assert(err == 0);
+  assert(osdm_bl.length());
+
+  OSDMap osdm;
+  osdm.decode(osdm_bl);
+
+  dout(10) << __func__ << " loaded osdmap epoch " << closest_pinned
+           << "; applying incremental maps." << dendl;
+
+  uint64_t osdm_features = 0;
+  for (version_t v = closest_pinned + 1; v <= ver; ++v) {
+    dout(20) << __func__ << "    applying inc epoch " << v << dendl;
+    bufferlist inc_bl;
+    int err = get_version(v, inc_bl);
+    assert(err == 0);
+    assert(inc_bl.length());
+
+    OSDMap::Incremental inc(inc_bl);
+    err = osdm.apply_incremental(inc);
+    assert(err == 0);
+
+    if (inc.full_crc && osdm.crc != inc.full_crc) {
+      derr << __func__
+           << "    osdmap crc mismatch! (osdmap crc " << osdm.crc
+           << ", expected " << inc.full_crc << ")" << dendl;
+      assert(0 == "osdmap crc mismatch");
+    }
+
+    osdm_features = inc.encode_features;
+  }
+
+  if (!osdm_features) {
+    dout(10) << __func__
+             << " last incremental map didn't have features;"
+             << " defaulting to quorum's or all" << dendl;
+    osdm_features = mon->quorum_features ? mon->quorum_features : -1;
+  }
+  osdm.encode(bl, osdm_features | CEPH_FEATURE_RESERVED);
+
+  return 0;
+}
+
 int OSDMonitor::get_version_full(version_t ver, bufferlist& bl)
 {
     if (full_osd_cache.lookup(ver, &bl)) {
       return 0;
     }
     int ret = PaxosService::get_version_full(ver, bl);
-    if (!ret) {
-      full_osd_cache.add(ver, bl);
+    if (ret == -ENOENT) {
+      // build map?
+      ret = get_full_from_pinned_map(ver, bl);
+      if (ret != 0) {
+        return ret;
+      }
+    } else if (ret != 0) {
+      return ret;
     }
-    return ret;
+
+    full_osd_cache.add(ver, bl);
+    return 0;
 }
 
 epoch_t OSDMonitor::blacklist(const entity_addr_t& a, utime_t until)
