@@ -12,8 +12,9 @@
  * 
  */
 
-#include "MonmapMonitor.h"
-#include "Monitor.h"
+#include "mon/MonmapMonitor.h"
+#include "mon/Monitor.h"
+#include "mon/MonCommandHandler.h"
 #include "messages/MMonCommand.h"
 #include "messages/MMonJoin.h"
 
@@ -221,6 +222,129 @@ void MonmapMonitor::dump_info(Formatter *f)
     f->dump_int("mon", *q);
   f->close_section();
 }
+
+class MonStatHandler : public MonCommandQueryHandler<MonMap>
+{
+public:
+  MonStatHandler()
+    : MonCommandQueryHandler<MonMap>(
+        std::initializer_list<std::string>({ "mon stat" }))
+  { }
+
+  virtual int handle_query(
+      Monitor *mon,
+      const MonMap& map,
+      MonOpRequestRef op,
+      std::map<string,cmd_vartype>& cmdmap,
+      stringstream& ss,
+      bufferlist& rdata,
+      FormatterRef f) final
+  {
+    map.print_summary(ss);
+    ss << ", election epoch " << mon->get_epoch() << ", leader "
+       << mon->get_leader() << " " << mon->get_leader_name()
+       << ", quorum " << mon->get_quorum() << " " << mon->get_quorum_names();
+    return 0;
+  }
+};
+
+class MonGetMapHandler : public MonCommandQueryHandler<MonMap>
+{
+  PaxosService *svc;
+
+public:
+  MonGetMapHandler(PaxosService* _svc)
+    : MonCommandQueryHandler<MonMap>({ "mon getmap", "mon dump" }),
+      svc(_svc)
+  { }
+
+  int get_map(const MonMap& map, epoch_t epoch, MonMap& epoch_map)
+  {
+    if (!epoch) {
+      epoch_map = map;
+      return 0;
+    }
+
+    bufferlist bl;
+    r = svc->get_version(epoch, bl);
+    if (r < 0) {
+      return r;
+    }
+    assert(r == 0);
+    assert(bl.length() > 0);
+    epoch_map.decode(bl);
+    return 0;
+  }
+
+  virtual int handle_query(
+      Monitor *mon,
+      const MonMap& map,
+      MonOpRequestRef op,
+      std::map<string,cmd_vartype>& cmdmap,
+      stringstream& ss,
+      bufferlist& rdata,
+      FormatterRef f) final
+  {
+    epoch_t epoch;
+    int64_t epochnum;
+    cmd_getval(g_ceph_context, cmdmap, "epoch", epochnum, (int64_t)0);
+    epoch = epochnum;
+
+    MonMap m;
+    int r = get_map(map, epoch, m);
+    if (r == -ENOENT) {
+      ss << "there is no map for epoch " << epoch;
+      return r;
+    }
+    assert(r == 0);
+
+    MonMap *p = &map;
+    if (epoch) {
+      bufferlist bl;
+      r = svc->get_version(epoch, bl);
+      if (r == -ENOENT) {
+        ss << "there is no map for epoch " << epoch;
+        goto reply;
+      }
+      assert(r == 0);
+      assert(bl.length() > 0);
+      p = new MonMap;
+      p->decode(bl);
+    }
+
+    assert(p != NULL);
+
+    if (prefix == "mon getmap") {
+      p->encode(rdata, m->get_connection()->get_features());
+      r = 0;
+      ss << "got monmap epoch " << p->get_epoch();
+    } else if (prefix == "mon dump") {
+      stringstream ds;
+      if (f) {
+        f->open_object_section("monmap");
+        p->dump(f.get());
+        f->open_array_section("quorum");
+        for (set<int>::iterator q = mon->get_quorum().begin();
+            q != mon->get_quorum().end(); ++q) {
+          f->dump_int("mon", *q);
+        }
+        f->close_section();
+        f->close_section();
+        f->flush(ds);
+        r = 0;
+      } else {
+        p->print(ds);
+        r = 0;
+      }
+      rdata.append(ds);
+      ss << "dumped monmap epoch " << p->get_epoch();
+    }
+    if (p != mon->monmap)
+       delete p;
+
+    return 0;
+  }
+};
 
 bool MonmapMonitor::preprocess_command(MonOpRequestRef op)
 {

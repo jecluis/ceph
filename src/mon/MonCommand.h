@@ -158,3 +158,4 @@ struct MonCommand {
   }
 };
 WRITE_CLASS_ENCODER(MonCommand)
+
