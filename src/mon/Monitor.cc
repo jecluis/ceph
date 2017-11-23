@@ -306,6 +306,35 @@ void Monitor::do_admin_command(string command, cmdmap_t& cmdmap, string format,
       f->flush(ss);
     }
 
+  } else if (command == "test generate osdmap") {
+    int64_t num_maps;
+    if (!cmd_getval(g_ceph_context, cmdmap, "num_maps", num_maps)) {
+      ss << "missing or incorrect parameter for 'number of maps'; "
+            "this command expects an integer greater than, or equal to, zero.";
+      goto abort;
+    }
+
+    if (num_maps < 0) {
+      ss << "command expects 'number of maps' to be greater than, or equal "
+            "to, zero.";
+      goto abort;
+    }
+
+    if (!osdmon()) {
+      ss << "monitor hasn't been fully started; try again later.";
+      goto abort;
+    }
+
+    stringstream _ss;
+    osdmon()->do_test_generate_maps(num_maps, _ss);
+    ss << _ss.str();
+
+    // do we have an osdmon yet?
+    // if so, call a `do_test_generate_maps(num_maps)` and let the service
+    // deal with it.
+    // In the future, we could have an interface that forces implementing this
+    // for all services.
+
   } else {
     assert(0 == "bad AdminSocket command binding");
   }
@@ -758,6 +787,12 @@ int Monitor::preinit()
                                      admin_hook,
                                      "list existing sessions");
   assert(r == 0);
+
+  r = admin_socket->register_command("test generate osdmap",
+                                     "test generate osdmap name=num_maps,"
+                                     "type=CephInt,range=0",
+                                     admin_hook,
+                                     "generate a number of test osdmaps");
 
   lock.Lock();
 

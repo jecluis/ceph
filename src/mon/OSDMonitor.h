@@ -244,7 +244,6 @@ public:
   };
 
   // svc
-public:
   void create_initial() override;
   void get_store_prefixes(std::set<string>& s) const override;
 
@@ -574,6 +573,28 @@ protected:
 
   int32_t _allocate_osd_id(int32_t* existing_id);
 
+  /**
+   * Generates @p num_maps new maps in the store.
+   *
+   * All new maps are guaranteed to be consistent with the existing maps, and
+   * to not break constraints imposed by OSDMonitor::update_from_paxos().
+   *
+   * However, none of the maps are going to be proposed via Paxos, which
+   * essentially makes them local to the current monitor. We advise only
+   * taking advantage of this function when on a single-monitor quorum, or
+   * taking appropriate steps when deciding to use it in other contexts. We
+   * are not making this function usable in multi-monitor quorum because we
+   * think this will serve its purpose for the time being, and making it more
+   * resilient to possible future usage is adding unnecessary complexity at
+   * this time.
+   *
+   * Also, please keep in mind that calling this function with large numbers
+   * may cause the monitor to stop responding for a while. We made no efforts
+   * to split map generation in chunks, in order to prevent the monitor from
+   * getting hung while processing the maps.
+   */
+  void test_generate_maps(uint64_t num_maps);
+
 public:
   OSDMonitor(CephContext *cct, Monitor *mn, Paxos *p, const string& service_name);
 
@@ -654,6 +675,14 @@ public:
   void do_application_enable(int64_t pool_id, const std::string &app_name,
 			     const std::string &app_key="",
 			     const std::string &app_value="");
+
+  /**
+   * Point-of-entry to generate test maps.
+   *
+   * This method will setup, and eventually call,
+   * OSDMonitor::test_generate_maps(). See that function for more information.
+   */
+  void do_test_generate_maps(uint64_t num_maps, stringstream& ss);
 
   void add_flag(int flag) {
     if (!(osdmap.flags & flag)) {

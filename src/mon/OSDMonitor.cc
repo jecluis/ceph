@@ -1878,6 +1878,109 @@ bool OSDMonitor::do_prune(MonitorDBStore::TransactionRef tx)
 }
 
 
+void OSDMonitor::test_generate_maps(uint64_t num_maps)
+{
+  if (num_maps == 0) {
+    return;
+  }
+
+  version_t first = get_first_committed();
+  version_t curr_last = get_last_committed();
+  version_t final_last = curr_last + num_maps;
+
+  dout(1) << __func__
+          << " num_maps " << num_maps
+          << " currently_have [" << first << ".." << curr_last << "]"
+          << " will_have [" << first << ".." << final_last << "]"
+          << dendl;
+
+  bufferlist base_map_bl;
+  int err = get_version_full(curr_last, base_map_bl);
+  ceph_assert(err == 0);
+
+  OSDMap *base_osdm = new OSDMap();
+  base_osdm->decode(base_map_bl);
+
+  dout(20) << __func__
+           << " base map e" << base_osdm->get_epoch()
+           << " crc " << base_osdm->get_crc()
+           << dendl;
+
+  uint64_t encode_features = mon->get_quorum_con_features();
+  ceph_assert(encode_features != 0);
+
+  MonitorDBStore::TransactionRef tx(new MonitorDBStore::Transaction);
+  for (version_t v = curr_last+1; v <= final_last; ++v) {
+    OSDMap::Incremental inc(v);
+    inc.fsid = mon->monmap->get_fsid();
+    inc.modified = ceph_clock_now();
+
+    err = base_osdm->apply_incremental(inc);
+    ceph_assert(err == 0);
+    ceph_assert(base_osdm->get_epoch() == inc.epoch);
+
+    bufferlist new_osdm_bl, new_inc_bl;
+    base_osdm->encode(new_osdm_bl, encode_features | CEPH_FEATURE_RESERVED);
+
+    { // we are creating a new block solely for reading purposes.
+      // crc is only computed on encoding; we need to decode the map
+      // to know what the crc is.
+      OSDMap tmp_osdm;
+      tmp_osdm.decode(new_osdm_bl);
+      inc.full_crc = tmp_osdm.get_crc();
+    }
+    ::encode(inc, new_inc_bl, encode_features | CEPH_FEATURE_RESERVED);
+
+    if (g_conf->get_val<bool>("mon_debug_extra_checks")) {
+      OSDMap tmp_osdm;
+      OSDMap::Incremental tmp_inc;
+
+      tmp_osdm.decode(new_osdm_bl);
+      ::decode(tmp_inc, new_inc_bl);
+
+      dout(20) << __func__
+               << " e" << tmp_osdm.get_epoch() << " crc " << tmp_osdm.get_crc()
+               << " inc e" << tmp_inc.epoch << " crc " << tmp_inc.inc_crc
+               << " full_crc " << tmp_inc.full_crc
+               << dendl;
+
+      ceph_assert(tmp_inc.epoch == tmp_osdm.get_epoch());
+      ceph_assert(tmp_inc.full_crc == tmp_osdm.get_crc());
+    }
+
+    put_version(tx, inc.epoch, new_inc_bl);
+    put_version_full(tx, inc.epoch, new_osdm_bl);
+    put_last_committed(tx, inc.epoch);
+  }
+  mon->store->apply_transaction(tx);
+
+  refresh(nullptr);
+  create_pending();
+  ceph_assert(get_last_committed() == final_last);
+
+  delete base_osdm;
+}
+
+void OSDMonitor::do_test_generate_maps(uint64_t num_maps, stringstream& ss)
+{
+  if (num_maps == 0) {
+    ss << "asked to generate zero maps; nothing to do.";
+    return;
+  }
+
+  if (!is_writeable()) {
+    auto ctx = make_lambda_context([this, num_maps]() {
+        stringstream _ss;
+        do_test_generate_maps(num_maps, _ss);
+    });
+    wait_for_writeable_ctx(ctx);
+    ss << "queued generating " << num_maps << " new maps";
+    return;
+  }
+  test_generate_maps(num_maps);
+  ss << "generated " << num_maps << " new maps";
+}
+
 // -------------
 
 bool OSDMonitor::preprocess_query(MonOpRequestRef op)
