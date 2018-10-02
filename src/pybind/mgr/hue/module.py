@@ -3,6 +3,8 @@ import json
 import threading
 from enum import Enum
 from mgr_module import MgrModule
+from . import hue
+from . import config
 
 
 class Module(MgrModule):
