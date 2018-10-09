@@ -1,4 +1,62 @@
 from enum import Enum
+import requests
+import json
+import logger
+from logger import log
+
+WITH_HTTP_DEBUG = False
+
+"""
+class Logger:
+
+    def __init__(self):
+        self.logger = None
+
+    def __getattr__(self, name):
+        if self.logger is None:
+            return self.stub
+
+        try:
+            return self.logger.__getattribute__(name)
+        except AttributeError:
+            return self.stub
+
+    def stub(self, *args):
+        # print("called stub() with '{}'".format(args))
+        pass
+
+    def setLogger(self, l):
+        self.logger = l
+
+
+def setLogger(l):
+    global log
+    log.setLogger(l)
+"""
+
+
+def set_http_debug():
+    global WITH_HTTP_DEBUG
+    WITH_HTTP_DEBUG = True
+
+    """
+    import logging
+    if log.logger is None:
+        logging.basicConfig(level=logging.DEBUG)
+        _log = logging.getLogger()
+        setLogger(_log)
+    """
+    logger.initDebugLogger()
+
+    import logging
+    import httplib as http_client
+    http_client.HTTPConnection.debuglevel = 1
+    requests_log = logging.getLogger("requests.packages.urllib3")
+    requests_log.setLevel(logging.DEBUG)
+    requests_log.propagate = True
+
+
+# log = Logger()
 
 
 class HueErrors(Enum):
@@ -77,10 +135,13 @@ class HueBridge:
 
     @classmethod
     def get_endpoint(cls, action_name, **kwargs):
+
         if action_name not in cls.ENDPOINTS:
             raise HueError("invalid endpoint name '{}'".format(action_name))
         (raw_ep, method, auth) = cls.ENDPOINTS[action_name]
-        ep = None
+        log.debug("get_endpoint: ep = '{}', method = '{}', "
+                  "auth = '{}'".format(raw_ep, method, auth))
+        ep = ""
         if raw_ep is not None:
             ep = raw_ep.format(kwargs)
 
@@ -88,14 +149,14 @@ class HueBridge:
             if 'user' not in kwargs:
                 raise KeyError("endpoint for '{}' requires a user, "
                                "but none specified".format(action_name))
-            ep = '{user}/{ep}'.format(user=kwargs["user"], ep)
-        return (ep, method, auth)
+            ep = '{user}/{ep}'.format(user=kwargs["user"], ep=ep)
+        return (ep, method)
 
     @classmethod
     def get_url(cls, action_name, **kwargs):
         if 'addr' not in kwargs:
             raise KeyError("address has not been specified")
-        (ep, method) = cls.get_endpoint(action_name, kwargs)
+        (ep, method) = cls.get_endpoint(action_name, **kwargs)
         url = cls.URL.format(addr=kwargs["addr"],
                              endpoint=ep)
         return (url, method)
@@ -126,29 +187,30 @@ class HueBridge:
     @staticmethod
     def check_has_errors(lst):
         if isinstance(lst, dict):
-            return is_error(lst)
+            return HueBridge.is_error(lst)
         for entry in lst:
-            if is_error(entry):
+            if HueBridge.is_error(entry):
                 return True
         return False
 
     @staticmethod
     def get_errors(lst):
         if isinstance(lst, dict):
-            return [] if not is_error(lst) else [lst]
+            return [] if not HueBridge.is_error(lst) else [lst]
         return [entry for entry in lst if 'error' in entry]
 
     @staticmethod
-    def error_match(err, expected):
-        err_type = lambda d: d['type'] \
-                (if isinstance(d, dict) and 'type' in d) else None
+    def _get_type(d):
+        return d['type'] if isinstance(d, dict) and 'type' in d else None
 
+    @staticmethod
+    def error_match(err, expected):
         if isinstance(err, int):
             val = err
-        elif isinstance(err, lst):
-            val = err_type(lst[0]) if len(lst) > 0 else {}
+        elif isinstance(err, list):
+            val = HueBridge._get_type(lst[0]) if len(lst) > 0 else {}
         elif isinstance(err, dict):
-            val = err_type(err)
+            val = HueBridge._get_type(err)
         else:
             raise TypeError("'err' should be a dictionary")
         if not val:
@@ -156,30 +218,41 @@ class HueBridge:
         return HueErrors(val) == expected
 
     @staticmethod
-    def do_request(url, method, **kwargs):
-        args = {}
-        if 'data' in kwargs:
-            args = {"data": json.dumps(kwargs["data"])}
+    def is_error_response(response):
+        return True if response.status_code != 200 else False
+
+    @classmethod
+    def do_request(cls, url, method, data=None):
+
+        log.debug("url = '{}', method = '{}', data = '{}'".format(
+            url, method, data))
+
+        if data is not None:
+            if isinstance(data, dict):
+                data = json.dumps(data)
+            elif not isinstance(data, str):
+                raise ValueError("expected 'data' as a dict or str")
 
         response = None
         if method == "get":
-            response = requests.get(url, headers=HEADERS)
+            response = requests.get(url, headers=cls.HEADERS)
         elif method == "post":
-            response = requests.post(url, headers=HEADERS, args)
+            response = requests.post(url, headers=cls.HEADERS, data=data)
         elif method == "put":
-            response = requests.put(url, headers=HEADERS, args)
+            response = requests.put(url, headers=cls.HEADERS, data=data)
         elif method == "delete":
-            reponse = requests.delete(url, headers=HEADERS, args)
+            reponse = requests.delete(url, headers=cls.HEADERS, data=data)
 
-        if is_error_response(response):
-            raise BridgeError(f"unable to perform request: {response!r}")
+        if cls.is_error_response(response):
+            raise BridgeError(
+                "unable to perform request: {}".format(response))
 
-        json = response.json()
+        res_json = response.json()
         errors = None
-        if check_has_errors(json):
-            errors = get_errors(json)
+        if cls.check_has_errors(res_json):
+            errors = cls.get_errors(res_json)
 
-        return (json, errors)
+        return (res_json, errors)
 
     @classmethod
     def user_create(cls, address):
@@ -187,21 +260,33 @@ class HueBridge:
         assert len(url) > 0
         assert len(method) > 0
 
-        (res, errors) = cls.do_request(url, method, data=DEVICE_TYPE)
+        log.debug("user_create: url = '{}', addr = '{}'".format(
+            url, address))
+
+        data = {'devicetype': cls.DEVICE_TYPE}
+        (res, errors) = cls.do_request(url, method, data=data)
         if errors:
             assert len(errors) == 1
-            if error_match(errors[0], HueErrors.LINK_BUTTON_NOT_PRESSED):
+            if cls.error_match(errors[0], HueErrors.LINK_BUTTON_NOT_PRESSED):
                 error_msg = "Bridge's link button not pressed."
             else:
-                error_msg = "unexpected error response: {errors[0]!r}"
+                error_msg = "unexpected error response: {}".format(errors[0])
+            raise HueError(error_msg)
 
+        assert errors is None
+        assert len(res) == 1
+        assert 'success' in res[0]
+        res = res[0]['success']
+        assert 'username' in res
+        assert len(res['username']) > 0
+        return res['username']
 
-    def user_exists(config):
-        logging.debug("checking if user '{}' exists".format(self.user))
+    def user_exists(self, config):
+        log.debug("checking if user '{}' exists".format(self.user))
         endpoint = 'api/{}'.format(self.user)
         url = 'http://{addr}/{ep}'.format(
-                addr=config['address'], ep=endpoint)
-        logging.debug("requesting GET to {}".format(url))
+            addr=config['address'], ep=endpoint)
+        log.debug("requesting GET to {}".format(url))
         response = requests.get(url)
 
     #    logging.debug("response: code {}, json: {}".format(
@@ -212,11 +297,11 @@ class HueBridge:
 
         json = response.json()
 
-        if is_error(json):
+        if self.is_error(json):
             error = get_error(json)
             if HueErrors(error['type']) == HueErrors.UNAUTHORIZED_USER:
                 return False
-            logging.error("unexpected error: {}".format(error))
+            log.error("unexpected error: {}".format(error))
             assert False
         return True
 

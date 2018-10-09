@@ -1,0 +1,23 @@
+{
+    "address": "192.168.1.107",
+    "user": "REqU0muDLEGwEGDVsGjmxffe0bui-XKwS20wkYoE",
+    "status_groups": [
+      {
+        "group": "office",
+        "status": {
+          "healthy": {
+            "color": "green",
+            "type": "solid"
+          },
+          "warning": {
+            "color": "yellow",
+            "type": "solid"
+          },
+          "error": {
+            "color": "red",
+            "type": "alert"
+          }
+        }
+      }
+    ]
+}
