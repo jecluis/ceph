@@ -476,7 +476,9 @@ private:
   int lookup_pruned_snap(int64_t pool, snapid_t snap,
 			 snapid_t *begin, snapid_t *end);
 
+  void _prepare_set_flag(MonOpRequestRef op, int flag);
   bool prepare_set_flag(MonOpRequestRef op, int flag);
+  void _prepare_unset_flag(MonOpRequestRef op, int flag);
   bool prepare_unset_flag(MonOpRequestRef op, int flag);
 
   void _pool_op_reply(MonOpRequestRef op,

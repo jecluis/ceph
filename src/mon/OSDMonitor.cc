@@ -6770,26 +6770,36 @@ int OSDMonitor::prepare_new_pool(string& name,
   return 0;
 }
 
-bool OSDMonitor::prepare_set_flag(MonOpRequestRef op, int flag)
+void OSDMonitor::_prepare_set_flag(MonOpRequestRef op, int flag)
 {
   op->mark_osdmon_event(__func__);
-  ostringstream ss;
   if (pending_inc.new_flags < 0)
     pending_inc.new_flags = osdmap.get_flags();
   pending_inc.new_flags |= flag;
+}
+
+bool OSDMonitor::prepare_set_flag(MonOpRequestRef op, int flag)
+{
+  _prepare_set_flag(op, flag);
+  ostringstream ss;
   ss << OSDMap::get_flag_string(flag) << " is set";
   wait_for_finished_proposal(op, new Monitor::C_Command(mon, op, 0, ss.str(),
 						    get_last_committed() + 1));
   return true;
 }
 
-bool OSDMonitor::prepare_unset_flag(MonOpRequestRef op, int flag)
+void OSDMonitor::_prepare_unset_flag(MonOpRequestRef op, int flag)
 {
   op->mark_osdmon_event(__func__);
-  ostringstream ss;
   if (pending_inc.new_flags < 0)
     pending_inc.new_flags = osdmap.get_flags();
   pending_inc.new_flags &= ~flag;
+}
+
+bool OSDMonitor::prepare_unset_flag(MonOpRequestRef op, int flag)
+{
+  _prepare_unset_flag(op, flag);  
+  ostringstream ss;
   ss << OSDMap::get_flag_string(flag) << " is unset";
   wait_for_finished_proposal(op, new Monitor::C_Command(mon, op, 0, ss.str(),
 						    get_last_committed() + 1));
@@ -9837,42 +9847,117 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
   } else if (prefix == "osd set") {
     string sure;
     cmd_getval(cct, cmdmap, "sure", sure);
-    string key;
-    cmd_getval(cct, cmdmap, "key", key);
-    if (key == "full")
-      return prepare_set_flag(op, CEPH_OSDMAP_FULL);
-    else if (key == "pause")
-      return prepare_set_flag(op, CEPH_OSDMAP_PAUSERD | CEPH_OSDMAP_PAUSEWR);
-    else if (key == "noup")
-      return prepare_set_flag(op, CEPH_OSDMAP_NOUP);
-    else if (key == "nodown")
-      return prepare_set_flag(op, CEPH_OSDMAP_NODOWN);
-    else if (key == "noout")
-      return prepare_set_flag(op, CEPH_OSDMAP_NOOUT);
-    else if (key == "noin")
-      return prepare_set_flag(op, CEPH_OSDMAP_NOIN);
-    else if (key == "nobackfill")
-      return prepare_set_flag(op, CEPH_OSDMAP_NOBACKFILL);
-    else if (key == "norebalance")
-      return prepare_set_flag(op, CEPH_OSDMAP_NOREBALANCE);
-    else if (key == "norecover")
-      return prepare_set_flag(op, CEPH_OSDMAP_NORECOVER);
-    else if (key == "noscrub")
-      return prepare_set_flag(op, CEPH_OSDMAP_NOSCRUB);
-    else if (key == "nodeep-scrub")
-      return prepare_set_flag(op, CEPH_OSDMAP_NODEEP_SCRUB);
-    else if (key == "notieragent")
-      return prepare_set_flag(op, CEPH_OSDMAP_NOTIERAGENT);
-    else if (key == "nosnaptrim")
-      return prepare_set_flag(op, CEPH_OSDMAP_NOSNAPTRIM);
-    else if (key == "sortbitwise") {
-      return prepare_set_flag(op, CEPH_OSDMAP_SORTBITWISE);
+    std::vector<string> keys;
+    cmd_getval(cct, cmdmap, "key", keys);
+
+
+    std::set<string> allowed_unsettable = {
+      "full", "pause", "noup", "nodown", "noout", "noin", "nobackfill",
+      "norebalance", "norecover", "noscrub", "nodeep-scrub",
+      "notieragent", "nosnaptrim"
+    };
+
+    std::set<string> allowed_permanent = {
+      "sortbitwise", "recovery_deletes", "require_jewel_osds",
+      "require_kraken_osds"
+    };
+
+    std::set<string> unsettable_flags;
+    std::set<string> permanent_flags;
+
+    string err_flags;
+    for (auto &p : keys) {
+      if (allowed_permanent.find(p) != allowed_permanent.end()) {
+	permanent_flags.insert(p);
+      } else if (allowed_unsettable.find(p) != allowed_unsettable.end()) {
+	unsettable_flags.insert(p);
+      } else {
+	if (!err_flags.empty()) {
+	  err_flags += ", ";
+	}
+	err_flags += p;
+	continue;
+      }
+    }
+    if (!err_flags.empty()) {
+      ss << "unrecognized flags: " << err_flags;
+      err = -EINVAL;
+      goto reply;
+    }
+
+    string err_permanent;
+    if ((permanent_flags.size() > 0) && (keys.size() != 1) ) {
+      for (auto &p : permanent_flags) {
+	if (!err_permanent.empty()) {
+	  err_permanent += ", ";
+	}
+	err_permanent += p;
+      }
+    }
+    if (!err_permanent.empty()) {
+      ss << "Due to the nature of these flags, you need to set them "
+	    "individually: " << err_permanent;
+      err = -EINVAL;
+      goto reply;
+    }
+
+    // do regular flags
+    string flags_set;
+    for (auto &key : unsettable_flags) {
+      if (key == "full")
+	_prepare_set_flag(op, CEPH_OSDMAP_FULL);
+      else if (key == "pause")
+	_prepare_set_flag(op, CEPH_OSDMAP_PAUSERD | CEPH_OSDMAP_PAUSEWR);
+      else if (key == "noup")
+	_prepare_set_flag(op, CEPH_OSDMAP_NOUP);
+      else if (key == "nodown")
+	_prepare_set_flag(op, CEPH_OSDMAP_NODOWN);
+      else if (key == "noout")
+	_prepare_set_flag(op, CEPH_OSDMAP_NOOUT);
+      else if (key == "noin")
+	_prepare_set_flag(op, CEPH_OSDMAP_NOIN);
+      else if (key == "nobackfill")
+	_prepare_set_flag(op, CEPH_OSDMAP_NOBACKFILL);
+      else if (key == "norebalance")
+	_prepare_set_flag(op, CEPH_OSDMAP_NOREBALANCE);
+      else if (key == "norecover")
+	_prepare_set_flag(op, CEPH_OSDMAP_NORECOVER);
+      else if (key == "noscrub")
+	_prepare_set_flag(op, CEPH_OSDMAP_NOSCRUB);
+      else if (key == "nodeep-scrub")
+	_prepare_set_flag(op, CEPH_OSDMAP_NODEEP_SCRUB);
+      else if (key == "notieragent")
+	_prepare_set_flag(op, CEPH_OSDMAP_NOTIERAGENT);
+      else if (key == "nosnaptrim")
+	_prepare_set_flag(op, CEPH_OSDMAP_NOSNAPTRIM);
+
+      if (!flags_set.empty()) {
+	flags_set += ", ";
+      }
+      flags_set += key;
+    }
+
+    if (unsettable_flags.size() > 0) {
+      ceph_assert(permanent_flags.size() == 0);
+      ss << flags_set << " set";
+      goto update;
+    }
+
+    ceph_assert(permanent_flags.size() == 1);
+    ceph_assert(unsettable_flags.size() == 0);
+
+    auto p = permanent_flags.begin();
+    ceph_assert (p != permanent_flags.end());
+    string key = *p;
+
+    if (key == "sortbitwise") {
+	return prepare_set_flag(op, CEPH_OSDMAP_SORTBITWISE);
     } else if (key == "recovery_deletes") {
       if (!osdmap.get_num_up_osds() && sure != "--yes-i-really-mean-it") {
-        ss << "Not advisable to continue since no OSDs are up. Pass "
-           << "--yes-i-really-mean-it if you really wish to continue.";
-        err = -EPERM;
-        goto reply;
+	ss << "Not advisable to continue since no OSDs are up. Pass "
+	  << "--yes-i-really-mean-it if you really wish to continue.";
+	err = -EPERM;
+	goto reply;
       }
       if (HAVE_FEATURE(osdmap.get_up_osd_features(), OSD_RECOVERY_DELETES)
           || sure == "--yes-i-really-mean-it") {
@@ -9935,38 +10020,71 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
     }
 
   } else if (prefix == "osd unset") {
-    string key;
-    cmd_getval(cct, cmdmap, "key", key);
-    if (key == "full")
-      return prepare_unset_flag(op, CEPH_OSDMAP_FULL);
-    else if (key == "pause")
-      return prepare_unset_flag(op, CEPH_OSDMAP_PAUSERD | CEPH_OSDMAP_PAUSEWR);
-    else if (key == "noup")
-      return prepare_unset_flag(op, CEPH_OSDMAP_NOUP);
-    else if (key == "nodown")
-      return prepare_unset_flag(op, CEPH_OSDMAP_NODOWN);
-    else if (key == "noout")
-      return prepare_unset_flag(op, CEPH_OSDMAP_NOOUT);
-    else if (key == "noin")
-      return prepare_unset_flag(op, CEPH_OSDMAP_NOIN);
-    else if (key == "nobackfill")
-      return prepare_unset_flag(op, CEPH_OSDMAP_NOBACKFILL);
-    else if (key == "norebalance")
-      return prepare_unset_flag(op, CEPH_OSDMAP_NOREBALANCE);
-    else if (key == "norecover")
-      return prepare_unset_flag(op, CEPH_OSDMAP_NORECOVER);
-    else if (key == "noscrub")
-      return prepare_unset_flag(op, CEPH_OSDMAP_NOSCRUB);
-    else if (key == "nodeep-scrub")
-      return prepare_unset_flag(op, CEPH_OSDMAP_NODEEP_SCRUB);
-    else if (key == "notieragent")
-      return prepare_unset_flag(op, CEPH_OSDMAP_NOTIERAGENT);
-    else if (key == "nosnaptrim")
-      return prepare_unset_flag(op, CEPH_OSDMAP_NOSNAPTRIM);
-    else {
-      ss << "unrecognized flag '" << key << "'";
-      err = -EINVAL;
+    vector<string> keys;
+    cmd_getval(cct, cmdmap, "key", keys);
+
+    std::set<string> allowed_flags = {
+      "full", "pause", "noup", "nodown", "noout", "noin", "nobackfill",
+      "norebalance", "norecover", "noscrub", "nodeep-scrub",
+      "notieragent", "nosnaptrim"
+    };
+
+    string err_str;
+    for (auto &key : keys) {
+      if (allowed_flags.find(key) == allowed_flags.end()) {
+	if (err_str.empty()) {
+	  err_str = "unrecognized flag: '" + key + "'";
+	  continue;
+	}
+	err_str += ", '" + key + "'";
+      }
     }
+    if (!err_str.empty()) {
+      ss << err_str;
+      err = -EINVAL;
+      goto reply;
+    }
+
+    string flags_unset;
+    for (auto &key : keys) {
+
+      if (key == "full") {
+	_prepare_unset_flag(op, CEPH_OSDMAP_FULL);
+      } else if (key == "pause") {
+	_prepare_unset_flag(op, CEPH_OSDMAP_PAUSERD | CEPH_OSDMAP_PAUSEWR);
+      } else if (key == "noup") {
+	_prepare_unset_flag(op, CEPH_OSDMAP_NOUP);
+      } else if (key == "nodown") {
+	_prepare_unset_flag(op, CEPH_OSDMAP_NODOWN);
+      } else if (key == "noout") {
+	_prepare_unset_flag(op, CEPH_OSDMAP_NOOUT);
+      } else if (key == "noin") {
+	_prepare_unset_flag(op, CEPH_OSDMAP_NOIN);
+      } else if (key == "nobackfill") {
+	_prepare_unset_flag(op, CEPH_OSDMAP_NOBACKFILL);
+      } else if (key == "norebalance") {
+	_prepare_unset_flag(op, CEPH_OSDMAP_NOREBALANCE);
+      } else if (key == "norecover") {
+	_prepare_unset_flag(op, CEPH_OSDMAP_NORECOVER);
+      } else if (key == "noscrub") {
+	_prepare_unset_flag(op, CEPH_OSDMAP_NOSCRUB);
+      } else if (key == "nodeep-scrub") {
+	_prepare_unset_flag(op, CEPH_OSDMAP_NODEEP_SCRUB);
+      } else if (key == "notieragent") {
+	_prepare_unset_flag(op, CEPH_OSDMAP_NOTIERAGENT);
+      } else if (key == "nosnaptrim") {
+	_prepare_unset_flag(op, CEPH_OSDMAP_NOSNAPTRIM);
+      } else {
+	ceph_abort();
+      }
+
+      if (!flags_unset.empty()) {
+	flags_unset += ", ";
+      }
+      flags_unset += key;
+    }
+    ss << flags_unset << " unset";
+    goto update;
 
   } else if (prefix == "osd require-osd-release") {
     string release;
