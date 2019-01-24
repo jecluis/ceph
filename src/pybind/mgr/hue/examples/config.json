@@ -1,0 +1,24 @@
+{
+    "address": "192.168.1.107",
+    "user_error": "Ep5BpMYd0oISC0TeAqi9LaFytuBR3ZLjkZxKLYWq",
+    "user": "REqU0muDLEGwEGDVsGjmxffe0bui-XKwS20wkYoE",
+    "status_groups": [
+      {
+        "group": "office",
+        "status": {
+          "HEALTH_OK": {
+            "color": "green",
+            "type": "solid"
+          },
+          "HEALTH_WARN": {
+            "color": "yellow",
+            "type": "solid"
+          },
+          "HEALTH_ERR": {
+            "color": "red",
+            "type": "alert"
+          }
+        }
+      }
+    ]
+}
