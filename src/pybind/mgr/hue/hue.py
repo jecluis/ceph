@@ -1,38 +1,10 @@
 from enum import Enum
 import requests
 import json
-import logger
-from logger import log
+from . import logger
+from .logger import log
 
 WITH_HTTP_DEBUG = False
-
-"""
-class Logger:
-
-    def __init__(self):
-        self.logger = None
-
-    def __getattr__(self, name):
-        if self.logger is None:
-            return self.stub
-
-        try:
-            return self.logger.__getattribute__(name)
-        except AttributeError:
-            return self.stub
-
-    def stub(self, *args):
-        # print("called stub() with '{}'".format(args))
-        pass
-
-    def setLogger(self, l):
-        self.logger = l
-
-
-def setLogger(l):
-    global log
-    log.setLogger(l)
-"""
 
 
 def set_http_debug():
@@ -54,9 +26,6 @@ def set_http_debug():
     requests_log = logging.getLogger("requests.packages.urllib3")
     requests_log.setLevel(logging.DEBUG)
     requests_log.propagate = True
-
-
-# log = Logger()
 
 
 class HueErrors(Enum):

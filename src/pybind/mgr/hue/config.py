@@ -1,7 +1,7 @@
 import json
-import logger
-from logger import log
-from hue import HueColors
+from . import logger
+from .logger import log
+from .hue import HueColors
 
 
 class MalformedConfig(Exception):
@@ -122,11 +122,10 @@ class Config:
     def assimilate(self, name, cfg):
         log.debug('config assimilate: {} = {}'.format(name, cfg))
 
-        if (not isinstance(name, str) and not isinstance(name, unicode)) or \
-           len(name) == 0:
+        if not isinstance(name, str) or len(name) == 0:
             raise MalformedConfig("expecting a non-zero string as name")
 
-        if isinstance(cfg, str) or isinstance(cfg, unicode):
+        if isinstance(cfg, str):
             try:
                 cfg = json.loads(cfg)
             except SyntaxError as e:
@@ -139,10 +138,10 @@ class Config:
         groups = {}
         if 'user' in cfg:
             user = cfg['user']
-            assert isinstance(user, str) or isinstance(user, unicode)
+            assert isinstance(user, str)
         if 'address' in cfg:
             addr = cfg['address']
-            assert isinstance(addr, str) or isinstance(addr, unicode)
+            assert isinstance(addr, str)
 
         if 'status_groups' not in cfg:
             raise MalformedConfig("no status groups defined in config")
@@ -165,24 +164,22 @@ class Config:
         self._groups = groups
 
     def set_user(self, val):
-        assert isinstance(val, str) or isinstance(val, unicode)
+        assert isinstance(val, str)
         self._user = val
 
     def set_address(self, val):
-        assert isinstance(val, str) or isinstance(val, unicode)
+        assert isinstance(val, str)
         self._address = val
 
     def has_address(self):
         if self._address is not None:
-            assert isinstance(self._address, str) or \
-                isinstance(self._address, unicode)
+            assert isinstance(self._address, str)
             return len(self._address) > 0
         return False
 
     def has_user(self):
         if self._user is not None:
-            assert isinstance(self._user, str) or \
-                isinstance(self._user, unicode)
+            assert isinstance(self._user, str)
             return len(self._user) > 0
         return False
 
