@@ -130,6 +130,12 @@ class HueBridge:
                              endpoint=ep)
         return (url, method)
 
+    def get_user(self):
+        return self.user
+
+    def get_address(self):
+        return self.address
+
     @staticmethod
     def is_error_response(response):
         if response.status_code != 200:
@@ -249,6 +255,45 @@ class HueBridge:
         assert 'username' in res
         assert len(res['username']) > 0
         return res['username']
+
+    def get_groups(self):
+        log.debug('obtaining bridge groups from {} with user {}'.format(
+            self.address, self.user))
+        (url, method) = self.get_url('groups-get',
+                                     user=self.user,
+                                     addr=self.address)
+        log.debug('using url {}, method {}'.format(url, method))
+        (res, errors) = self.do_request(url, method)
+        if errors:
+            log.debug('found errors: {}'.format(errors))
+            return {}
+
+        return res
+
+    def _get_group_id(self, group):
+        groups = self.get_groups()
+        for gid, info in groups.items():
+            if info['name'] == group:
+                return gid
+        return None
+
+    def set_group_state(self, group, color):
+        log.debug('setting group {} color to {}'.format(group, color))
+        group_id = self._get_group_id(group)
+        if group_id is None:
+            log.debug('group {} not found'.format(group))
+            return False
+
+        (url, method) = self.get_url('groups-set',
+                                     user=self.user,
+                                     addr=self.address,
+                                     gid=group_id)
+        log.debug('using url {}, method {}'.format(url, method))
+        (res, errors) = self.do_request(url, method, data=color)
+        if errors:
+            log.debug('found errors: {}'.format(errors))
+            return False
+        return True
 
     def user_exists(self, config):
         log.debug("checking if user '{}' exists".format(self.user))

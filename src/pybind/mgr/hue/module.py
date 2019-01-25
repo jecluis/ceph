@@ -6,7 +6,7 @@ from enum import Enum
 from mgr_module import MgrModule
 from . import hue
 from . import config
-
+from .hue import HueBridge
 
 class Module(MgrModule):
 
@@ -65,6 +65,9 @@ class Module(MgrModule):
         self._config = {}
         self._raw_config = {}
         self._bridges = {}
+
+        from . import logger
+        logger.log.setLogger(self.log)
 
         # just for eye candy, to be used for those methods defined by
         # the MgrModule instead.
@@ -199,6 +202,25 @@ class Module(MgrModule):
 
     def handle_cmd_config_set(self, cmd, inbuf):
         self.log.debug('handle config set')
+
+    def handle_cmd_bridge(self, cmd, inbuf):
+        if cmd['prefix'] == 'hue bridge ls':
+            out_lst = []
+            for name, bridge in self._bridges.items():
+                out_lst.append({
+                    'name': name,
+                    'address': bridge.get_address(),
+                    'user': bridge.get_user()
+                    })
+            return (0, json.dumps(out_lst), '')
+        elif cmd['prefix'] == 'hue bridge info':
+            out_lst = []
+            for name, bridge in self._bridges.items():
+                out_lst.append({
+                    'name': name,
+                    'groups': bridge.get_groups()
+                    })
+            return (0, json.dumps(out_lst), '')
 
     def handle_command(self, inbuf, cmd):
         self.log.info('handle_command( '
