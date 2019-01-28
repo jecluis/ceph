@@ -66,6 +66,8 @@ class Module(MgrModule):
         self._raw_config = {}
         self._bridges = {}
 
+        self._notify_lock = threading.Lock()
+
         from . import logger
         logger.log.setLogger(self.log)
 
@@ -85,6 +87,18 @@ class Module(MgrModule):
         else:
             self.log.debug('unknown health status: {}'.format(status))
 
+        for brg_name, cfg in self._config.items():
+            grp_lst = cfg.get_status_groups(status)
+            if len(grp_lst) == 0:
+                self.log.debug('bridge {} does not handle {}'.format(
+                    brg_name, status))
+                continue
+            for grp_name, color in grp_lst:
+                self.log.debug('setting color {}, grp {}, bridge {}'.format(
+                    color, grp_name, brg_name))
+                bridge = self._bridges[brg_name]
+                bridge.set_group_state(grp_name, color)
+
     def notify(self, notify_type, notify_id):
         if notify_type != 'health':
             return
@@ -92,7 +106,8 @@ class Module(MgrModule):
         self.log.debug('Received health update: {}'.format(health))
 
         if 'status' in health:
-            self.handle_health_status(health['status'])
+            with self._notify_lock:
+                self.handle_health_status(health['status'])
         self._event.set()
 
     def _init_bridges(self):
@@ -158,9 +173,7 @@ class Module(MgrModule):
             return (-errno.EINVAL, '',
                     'Command requires a bridge name to be provided.')
         bridge_name = cmd['bridge']
-        if not (isinstance(bridge_name, str) or
-                isinstance(bridge_name, unicode)) or \
-           len(bridge_name) == 0:
+        if not isinstance(bridge_name, str) or len(bridge_name) == 0:
             return (-errno.EINVAL, '',
                     'Command requires a non-empty string as bridge name.')
 
@@ -168,7 +181,7 @@ class Module(MgrModule):
             return (-errno.EINVAL, '',
                     'Command requires a config to be provided.')
 
-        if not (isinstance(inbuf, str) or isinstance(inbuf, unicode)):
+        if not isinstance(inbuf, str):
             return (-errno.EINVAL, '', 'Provided config is not a string')
         try:
             cfg = config.Config.create(bridge_name, inbuf)
@@ -187,8 +200,12 @@ class Module(MgrModule):
         else:
             out_msg = 'Bridge \'{}\' has been set up'.format(bridge_name)
 
+        if bridge_name in self._config:
+            self.log.debug('replacing config for \'{}\''.format(bridge_name))
         self._config[bridge_name] = cfg
         self.save_config()
+        self.load_config()
+        self._init_bridges()
         return (0, out_msg, '')
 
     def handle_cmd_create_user(self, cmd):

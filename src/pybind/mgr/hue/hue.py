@@ -112,7 +112,13 @@ class HueBridge:
                   "auth = '{}'".format(raw_ep, method, auth))
         ep = ""
         if raw_ep is not None:
-            ep = raw_ep.format(kwargs)
+            log.debug('get_endpoint: format {} using args = {}'.format(
+                raw_ep, kwargs))
+            try:
+                ep = raw_ep.format(**kwargs)
+            except Exception as e:
+                log.debug('unable to obtain endpoint: {}'.format(e))
+                return None
 
         if auth:
             if 'user' not in kwargs:
@@ -272,6 +278,7 @@ class HueBridge:
 
     def _get_group_id(self, group):
         groups = self.get_groups()
+        log.debug('_get_group_id() obtained groups {}'.format(groups))
         for gid, info in groups.items():
             if info['name'] == group:
                 return gid
@@ -283,16 +290,22 @@ class HueBridge:
         if group_id is None:
             log.debug('group {} not found'.format(group))
             return False
+        else:
+            log.debug('set_group_state(): using group id {}'.format(group_id))
 
-        (url, method) = self.get_url('groups-set',
+        (url, method) = self.get_url('group-set',
                                      user=self.user,
                                      addr=self.address,
                                      gid=group_id)
-        log.debug('using url {}, method {}'.format(url, method))
-        (res, errors) = self.do_request(url, method, data=color)
+
+        log.debug('set_group_state(): '
+                  'using url {}, method {}'.format(url, method))
+        (res, errors) = self.do_request(url, method, data=color.color)
         if errors:
             log.debug('found errors: {}'.format(errors))
             return False
+        log.debug('set_group_state(): '
+                  'result = {}'.format(res))
         return True
 
     def user_exists(self, config):

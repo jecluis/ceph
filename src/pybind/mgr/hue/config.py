@@ -83,6 +83,12 @@ class StatusGroup:
         logging.debug("setting hue group {}".format(grp))
         self.hue_group = grp
 
+    def handles_status(self, status_str):
+        return status_str in self.status
+
+    def get_status_color(self, status_str):
+        return self.status[status_str]
+
 
 def test_read_config(path):
     with open(path, 'r') as f:
@@ -194,3 +200,13 @@ class Config:
 
     def get_raw_config(self):
         return self._config
+
+    def get_status_groups(self, status_str):
+        grp_lst = []
+        for grp_name, grp in self._groups.items():
+            if not grp.handles_status(status_str):
+                continue
+            color = grp.get_status_color(status_str)
+            grp_lst.append( (grp_name, color) )
+        return grp_lst
+
