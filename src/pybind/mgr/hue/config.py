@@ -210,3 +210,5 @@ class Config:
             grp_lst.append( (grp_name, color) )
         return grp_lst
 
+    def get_groups_names(self):
+        return self._groups.keys()

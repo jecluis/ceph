@@ -102,6 +102,8 @@ class HueBridge:
         self.address = address
         self.user = user
 
+        self._current_group_color = {}
+
     @classmethod
     def get_endpoint(cls, action_name, **kwargs):
 
@@ -284,29 +286,68 @@ class HueBridge:
                 return gid
         return None
 
-    def set_group_state(self, group, color):
-        log.debug('setting group {} color to {}'.format(group, color))
+    def _set_group_state(self, group, payload):
+        log.debug('_set_group_state: setting group {} to {}'.format(
+            group, payload))
+
         group_id = self._get_group_id(group)
         if group_id is None:
-            log.debug('group {} not found'.format(group))
+            log.debug('_set_group_state: group {} not found'.format(group))
             return False
         else:
-            log.debug('set_group_state(): using group id {}'.format(group_id))
+            log.debug('_set_group_state(): using group id {}'.format(group_id))
 
         (url, method) = self.get_url('group-set',
                                      user=self.user,
                                      addr=self.address,
                                      gid=group_id)
 
-        log.debug('set_group_state(): '
+        log.debug('_set_group_state(): '
                   'using url {}, method {}'.format(url, method))
-        (res, errors) = self.do_request(url, method, data=color.color)
+        (res, errors) = self.do_request(url, method, data=payload)
         if errors:
-            log.debug('found errors: {}'.format(errors))
+            log.debug('_set_group_state: found errors: {}'.format(errors))
             return False
         log.debug('set_group_state(): '
                   'result = {}'.format(res))
         return True
+
+    def _get_group_current_color(self, group):
+        if group not in self._current_group_color:
+            return None
+        return self._current_group_color[group]
+
+    def _set_group_current_color(self, group, color):
+        assert group is not None
+        self._current_group_color[group] = color
+
+    def set_group_state(self, group, color):
+        log.debug('set_group_state: group {} to color {}'.format(group,color))
+
+        cur_color = self._get_group_current_color(group)
+        if cur_color is not None and color == cur_color:
+            log.debug('set_group_state: already at color {}'.format(color))
+            return True
+
+        payload = {'on': True}
+
+        alert_payload = None
+        if color.is_alert():
+            alert_payload = {'alert': 'lselect'}
+        else:
+            alert_payload = {'alert': 'select'}
+        payload.update(alert_payload)
+        payload.update(color.color)
+
+        success = self._set_group_state(group, payload)
+        if success:
+            self._set_group_current_color(group, color)
+        return success
+
+    def shutdown_group(self, group):
+        payload = {'on': False}
+        self._set_group_current_color(group, None)
+        return self._set_group_state(group, payload)
 
     def user_exists(self, config):
         log.debug("checking if user '{}' exists".format(self.user))

@@ -129,8 +129,34 @@ class Module(MgrModule):
             if self._shutdown:
                 break
 
+    def _shutdown_groups(self):
+        self.log.debug('_shutdown_groups: shutting down')
+
+        for name, cfg in self._config.items():
+            self.log.debug('_shutdown_groups: shutting down for {}'.format(
+                name))
+
+            groups = cfg.get_groups_names()
+            if name not in self._bridges:
+                self.log.debug('_shutdown: unable to find bridge {}'.format(
+                    name))
+                continue
+
+            bridge = self._bridges[name]
+            if not bridge:
+                self.log.debug('_shutdown: bridge {} does not exist'.format(
+                    name))
+                continue
+
+            for grp_name in groups:
+                self.log.debug('_shutdown: bridge {}, group {}'.format(
+                    name, grp_name))
+                bridge.shutdown_group(grp_name)
+
     def shutdown(self):
         self._shutdown = True
+        self._shutdown_groups()
+
         self._event.set()
 
     def save_config(self):
