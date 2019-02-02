@@ -15,18 +15,9 @@ class Module(MgrModule):
 
     COMMANDS = [
         {
-            'cmd': 'hue setup '
-                   'name=bridge,type=CephString',
-            'desc': 'Setup a Hue bridge. Requires passing a config file.',
-            'perm': 'w'
-        },
-        {
-            'cmd': 'hue create-user '
-                   'name=pressed,type=CephChoices,'
-                   'strings=--pressed,req=false',
-            'desc': 'Creates a user in the Hue bridge. '
-                    'Requires pressing the bridge\'s link button',
-            'perm': 'w'
+            'cmd': 'hue config assimilate',
+            'desc': 'Assimilate a full configuration file',
+            'perm': 'rw'
         },
         {
             'cmd': 'hue config get',
@@ -36,7 +27,22 @@ class Module(MgrModule):
         {
             'cmd': 'hue config set',
             'desc': 'Set a config',
-            'perm': 'w'
+            'perm': 'rw'
+        },
+        {
+            'cmd': 'hue bridge setup '
+                   'name=bridge,type=CephString',
+            'desc': 'Setup a Hue bridge. Requires passing a config file.',
+            'perm': 'rw'
+        },
+        {
+            'cmd': 'hue bridge create-user '
+                   'name=bridge,type=CephString '
+                   'name=pressed,type=CephChoices,'
+                   'strings=--pressed,req=false',
+            'desc': 'Creates a user in the Hue bridge. '
+                    'Requires pressing the bridge\'s link button',
+            'perm': 'rw'
         },
         {
             'cmd': 'hue bridge ls',
@@ -74,8 +80,6 @@ class Module(MgrModule):
         # just for eye candy, to be used for those methods defined by
         # the MgrModule instead.
         self.mgr = self
-#        self.log.debug('init hue, load config')
-#        self.load_config()
 
     def handle_health_status(self, status):
         if status == 'HEALTH_OK':
