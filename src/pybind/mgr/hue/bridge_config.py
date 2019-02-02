@@ -1,5 +1,5 @@
 from .logger import log
-from .hue import HueColors
+from .hue import HueColors, HueBridge, HueError
 
 
 class MalformedBridgeConfig(Exception):
@@ -25,19 +25,29 @@ class BridgeConfig:
         self._is_enabled = False
 
     @classmethod
-    def create(cls, name, cfg):
-        log.debug()
-        c = cls()
+    def create(cls, cfg):
+        log.debug("bridge.create: config = {}".format(cfg))
+        if 'name' not in cfg:
+            raise MalformedBridgeConfig("create: missing bridge name")
+        bridge_name = cfg['name']
+        log.debug("bridge.create: create bridge {}".format(bridge_name))
+        # technically, I think, we could make the decision here on whether
+        # this is a hue bridge or something else, and callout the appropriate
+        # subcall to handle everything. As it is, we're going with just the
+        # 'Bridge' class declared later in this file
+        c = Bridge()
         # let any exceptions just leak to the caller
-        c.assimilate(name, cfg)
+        c.assimilate(bridge_name, cfg)
         return c
 
     def _assimilate_groups(self, groups_cfg):
+        log.debug("bridge.assimilate_groups: {}".format(groups_cfg))
         if not isinstance(groups_cfg, list):
             raise MalformedBridgeConfig("expected list of groups")
 
         # nothing to do, move along
         if len(groups_cfg) == 0:
+            log.debug("bridge.assimilate_groups: no groups")
             return
 
         self._groups = []
@@ -47,17 +57,20 @@ class BridgeConfig:
             except MalformedBridgeGroup as e:
                 raise MalformedBridgeConfig(e)
             self._groups.append(status_group)
+        log.debug("bridge.assimilate_groups: groups assimilated")
 
     def assimilate(self, name, cfg):
+        self._name = name
+
         if 'user' in cfg:
             self._user = cfg['user']
             assert isinstance(self._user, str)
         if 'address' in cfg:
-            self_address = cfg['address']
+            self._address = cfg['address']
             assert isinstance(self._address, str)
-
         if 'groups' in cfg:
             self._assimilate_groups(cfg['groups'])
+        log.debug("bridge.assimilate: assimilated")
 
     def enable(self):
         self._is_enabled = True
@@ -138,8 +151,10 @@ class BridgeGroup:
 class BridgeStatusGroup(BridgeGroup):
 
     def __init__(self, group):
-        super(BridgeStatus, self).__init__()
+        super().__init__()
         self._status_groups = {}
+
+        log.debug("bridge_sgroup: init cfg = {}".format(group))
 
         if 'name' not in group:
             raise MalformedBridgeGroup("group requires a name")
@@ -279,3 +294,7 @@ class Bridge(BridgeConfig):
         log.debug("bridge.disable: disabling bridge {}".format(self._name))
         super().disable()
         self._bridge.shutdown()
+
+    def set_group_state(self, group, status_color):
+        group_name = group.get_name()
+        return self._bridge.set_group_state(group_name, status_color)

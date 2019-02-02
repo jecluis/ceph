@@ -12,7 +12,7 @@ class Config:
     def __init__(self):
         self._format = None
         self._version = 0
-        self._bridges = []
+        self._bridges = {}
         self._enabled_bridges = []
 
     @classmethod
@@ -22,16 +22,13 @@ class Config:
         return c
 
     @classmethod
-    def assimilate(self, cfg):
+    def assimilate(cls, cfg):
         c = cls()
         c._assimilate(cfg)
         return c
 
     def _assimilate(self, cfg):
-        log.debug('config assimilate: {} = {}'.format(name, cfg))
-
-        if not isinstance(name, str) or len(name) == 0:
-            raise MalformedConfig("expecting a non-zero string as name")
+        log.debug("config assimilate: {}".format(cfg))
 
         cfg = self._get_from_json(cfg)
 
@@ -42,7 +39,7 @@ class Config:
         for bridge in bridge_lst:
             try:
                 brg = BridgeConfig.create(bridge)
-            except MalformedBridgeConfig(e):
+            except MalformedBridgeConfig as e:
                 raise MalformedConfig(e)
             self._bridges[brg.get_name()] = brg
 
@@ -70,25 +67,44 @@ class Config:
             bridge = BridgeConfig.create(name, cfg)
         except MalformedBridgeConfig as e:
             raise MalformedConfig(e)
-        self._bridges.append(bridge)
+        self._bridges[name] = bridge
 
     def to_jsonish(self):
         bridge_lst = []
-        for bridge in self._bridges:
-            bridge_lst.append(bridge.to_jsonish())
+        for br_name, bridge in self._bridges.items():
+            log.debug("config.to_jsonish: doing bridge {}".format(br_name))
+            jsonish = bridge.to_jsonish()
+            log.debug("config.to_jsonish: for bridge {}, jsonish = {}".format(
+                br_name, jsonish))
+            bridge_lst.append(jsonish)
         d = {
                 'format': self._format,
                 'version': self._version,
-                'enabled': self._enabled,
+                'enabled': self._enabled_bridges,
                 'bridges': bridge_lst
             }
         return d
 
+    def get_bridges(self):
+        return self._bridges
+
+    def has_bridge(self, name):
+        return name in self._bridges
+
+    def has_bridges(self):
+        return self._bridges is not None and \
+               len(self._bridges) > 0
+
+    def get_bridge(self, name):
+        return self._bridges[name] if self.has_bridge(name) else None
+
     def is_bridge_enabled(self, name):
+        if not self.has_bridge(name):
+            return False
         return name in self._enabled_bridges
 
     def bridge_enable(self, name):
-        if not self._bridge_exists(name) or \
+        if not self.has_bridge(name) or \
            not self.is_bridge_enabled(name):
             return False
         self._enabled_bridges.append(name)
@@ -106,6 +122,7 @@ class Config:
         return json.dumps(self.to_jsonish())
 
     def get_status_groups(self, status_str):
+        log.debug("config.get_status_groups: for {}".format(status_str))
         groups = {}
         for br_name in self._enabled_bridges:
             br_groups = self._bridges[br_name].get_status_groups(status_str)

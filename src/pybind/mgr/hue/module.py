@@ -70,9 +70,9 @@ class Module(MgrModule):
         self._event = threading.Event()
         self._config = {}
         self._raw_config = {}
-        self._bridges = {}
 
         self._notify_lock = threading.Lock()
+        self._systems_nominal = False
 
         from . import logger
         logger.log.setLogger(self.log)
@@ -80,6 +80,81 @@ class Module(MgrModule):
         # just for eye candy, to be used for those methods defined by
         # the MgrModule instead.
         self.mgr = self
+
+    def _init_bridges(self):
+        self.log.debug("_init_bridges: {} in config".format(
+            len(self._config.get_bridges())))
+
+        for br_name, bridge in self._config.get_bridges().items():
+            self.log.debug("_init_bridges: init {}".format(bridge.get_name()))
+            assert br_name == bridge.get_name()
+            bridge.init()
+            self.log.debug("_init_bridges: init bridge {} "
+                           "at {} with user {}".format(
+                               bridge.get_name(),
+                               bridge.get_address(),
+                               bridge.get_user()))
+
+    def _save_config(self):
+        cfg = {
+            'version': self.MODULE_VERSION,
+            'config': dict([
+                (name, cfg.get_raw_config())
+                for name, cfg in self._config.items()])
+        }
+        self.log.debug('saving config: {}'.format(json.dumps(cfg)))
+        self.mgr.set_store(self.CONFIG_KEY, json.dumps(cfg))
+
+    def _load_config(self):
+        self.log.debug('load config')
+
+        raw_cfg = self.mgr.get_store(self.CONFIG_KEY, None)
+        if raw_cfg is None:
+            self.log.debug('load config: no saved config found')
+            return
+
+        self.log.debug('config loaded: {}'.format(raw_cfg))
+
+        self._raw_config = json.loads(raw_cfg)
+        self._config = config.Config.assimilate(self._raw_config)
+        self.log.debug("_load_config: loaded = {}".format(
+            json.dumps(self._config.to_jsonish())))
+
+    def serve(self):
+        self.log.debug("serve: loading config from store")
+        self._load_config()
+        try:
+            self.log.debug("serve: initializing bridges")
+            self._init_bridges()
+        except Exception as e:
+            raise e
+
+        self._systems_nominal = True
+
+        while True:
+            self._event.wait(10)  # hardcode for now
+            self._event.clear()
+            if self._shutdown:
+                break
+
+    def notify(self, notify_type, notify_id):
+        if not self._systems_nominal:
+            self.log.debug("notify: Systems not Nominal; abort!!")
+            return
+
+        if notify_type != 'health':
+            return
+        health = json.loads(self.get('health')['json'])
+        self.log.debug('Received health update: {}'.format(health))
+
+        if 'status' in health:
+            with self._notify_lock:
+                self.handle_health_status(health['status'])
+        self._event.set()
+
+    def get_bridge(self, br_name):
+        assert self._config.has_bridge(br_name)
+        return config.get_bridge(br_name)
 
     def handle_health_status(self, status):
         if status == 'HEALTH_OK':
@@ -91,47 +166,25 @@ class Module(MgrModule):
         else:
             self.log.debug('unknown health status: {}'.format(status))
 
-        for brg_name, cfg in self._config.items():
-            grp_lst = cfg.get_status_groups(status)
-            if len(grp_lst) == 0:
-                self.log.debug('bridge {} does not handle {}'.format(
-                    brg_name, status))
-                continue
-            for grp_name, color in grp_lst:
-                self.log.debug('setting color {}, grp {}, bridge {}'.format(
-                    color, grp_name, brg_name))
-                bridge = self._bridges[brg_name]
-                bridge.set_group_state(grp_name, color)
-
-    def notify(self, notify_type, notify_id):
-        if notify_type != 'health':
+        if not self._config.has_bridges():
+            self.log.debug("health status: non-existent config, ignore.")
             return
-        health = json.loads(self.get('health')['json'])
-        self.log.debug('Received health update: {}'.format(health))
 
-        if 'status' in health:
-            with self._notify_lock:
-                self.handle_health_status(health['status'])
-        self._event.set()
+        self.log.debug("health_status: get groups for "
+                       "status = {}".format(status))
+        health_groups = self._config.get_status_groups(status)
+        self.log.debug("health_status: groups = {}".format(health_groups))
 
-    def _init_bridges(self):
-        for name, cfg in self._config.items():
-            addr = cfg.get_address()
-            user = cfg.get_user()
-            bridge = HueBridge(addr, user)
-            self._bridges[name] = bridge
-
-    def serve(self):
-
-        self.log.debug('loading config from store')
-        self.load_config()
-        self._init_bridges()
-
-        while True:
-            self._event.wait(10)  # hardcode for now
-            self._event.clear()
-            if self._shutdown:
-                break
+        for br_name, br_groups in health_groups.items():
+            assert len(br_groups) > 0
+            for group in br_groups:
+                status_color = group.get_status_color(status)
+                self.log.debug("health status: "
+                               "bridge {}, group {}, color {}".format(
+                                   br_name, group.get_name(),
+                                   status_color))
+                bridge = self.get_bridge(br_name)
+                bridge.set_group_state(group, status_color)
 
     def _shutdown_groups(self):
         self.log.debug('_shutdown_groups: shutting down')
@@ -162,39 +215,6 @@ class Module(MgrModule):
         self._shutdown_groups()
 
         self._event.set()
-
-    def save_config(self):
-        cfg = {
-            'version': self.MODULE_VERSION,
-            'config': dict([
-                (name, cfg.get_raw_config())
-                for name, cfg in self._config.items()])
-        }
-        self.log.debug('saving config: {}'.format(json.dumps(cfg)))
-        self.mgr.set_store(self.CONFIG_KEY, json.dumps(cfg))
-
-    def load_config(self):
-        self.log.debug('load config')
-
-        raw_cfg = self.mgr.get_store(self.CONFIG_KEY, None)
-        if raw_cfg is None:
-            self.log.debug('load config: no saved config found')
-            return
-
-        self.log.debug('config loaded: {}'.format(raw_cfg))
-
-        self._raw_config = json.loads(raw_cfg)
-        self._config = {}
-        if 'config' not in self._raw_config:
-            self.log.debug('load config: config not present')
-            return
-
-        for name, val in self._raw_config['config'].items():
-            self.log.debug('creating config for \'{}\' with {}'.format(
-                name, val))
-            c = config.Config.create(name, val)
-            self._config[name] = c
-            self.log.debug('loaded config for \'{}\''.format(name))
 
     def handle_cmd_setup(self, cmd, inbuf):
         self.log.debug('handle setup')
@@ -233,8 +253,8 @@ class Module(MgrModule):
         if bridge_name in self._config:
             self.log.debug('replacing config for \'{}\''.format(bridge_name))
         self._config[bridge_name] = cfg
-        self.save_config()
-        self.load_config()
+        self._save_config()
+        self._load_config()
         self._init_bridges()
         return (0, out_msg, '')
 

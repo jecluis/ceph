@@ -104,6 +104,10 @@ class HueBridge:
 
         self._current_group_color = {}
 
+    def self_test(self):
+        log.debug("hue_bridge.self_test: not implemented")
+
+
     @classmethod
     def get_endpoint(cls, action_name, **kwargs):
 
