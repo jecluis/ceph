@@ -3,7 +3,7 @@ import json
 import threading
 import errno
 from enum import Enum
-from mgr_module import MgrModule
+from mgr_module import MgrModule, CLIReadCommand, CLIWriteCommand
 from . import hue
 from . import config
 from .hue import HueBridge
@@ -308,3 +308,12 @@ class Module(MgrModule):
             return (-errno.EINVAL,
                     '',
                     'Unknown command \'{}\''.format(cmd['prefix']))
+
+    @CLIWriteCommand('hue bridge enable',
+                     'name=bridge,type=CephString '
+                     'name=force,type=CephChoices,strings=--force,req=false',
+                     'Enable a bridge')
+    def cmd_bridge_enable(self, bridge, force=None):
+        self.log.debug("cmd_bridge_enable: bridge = {}, force = {}".format(
+            bridge, force))
+        return 0, 'not implemented', ''
