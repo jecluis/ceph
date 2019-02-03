@@ -1,24 +1,31 @@
 {
-    "address": "192.168.1.107",
-    "user_error": "Ep5BpMYd0oISC0TeAqi9LaFytuBR3ZLjkZxKLYWq",
-    "user": "REqU0muDLEGwEGDVsGjmxffe0bui-XKwS20wkYoE",
-    "status_groups": [
-      {
-        "group": "office",
-        "status": {
-          "HEALTH_OK": {
-            "color": "green",
-            "type": "solid"
-          },
-          "HEALTH_WARN": {
-            "color": "yellow",
-            "type": "solid"
-          },
-          "HEALTH_ERR": {
-            "color": "red",
-            "type": "alert"
+  "format": 2,
+  "bridges": [
+    {
+      "name": "foo",
+      "address": "192.168.179.10",
+      "user": "REqU0muDLEGwEGDVsGjmxffe0bui-XKwS20wkYoE",
+      "groups": [
+        {
+          "name": "dat-rack",
+          "status": {
+            "HEALTH_OK": {
+              "color": "green",
+              "type": "solid"
+            },
+            "HEALTH_WARN": {
+              "color": "yellow",
+              "type": "solid"
+            },
+            "HEALTH_ERR": {
+              "color": "red",
+              "type": "alert"
+            }
           }
         }
-      }
-    ]
+      ]
+    }
+  ],
+  "enabled": [
+  ]
 }
