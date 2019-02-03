@@ -333,16 +333,21 @@ class HueBridge:
             log.debug('set_group_state: already at color {}'.format(color))
             return True
 
+        log.debug('set_group_state: changing colors')
         payload = {'on': True}
 
         alert_payload = None
         if color.is_alert():
+            log.debug("set_group_state: changing to an alert!")
             alert_payload = {'alert': 'lselect'}
         else:
+            log.debug("set_group_state: regular transition.")
             alert_payload = {'alert': 'select'}
         payload.update(alert_payload)
-        payload.update(color.color)
+        log.debug("set_group_state: payload(1) = {}".format(payload))
+        payload.update(color.get_color())
 
+        log.debug("set_group_state: payload(2) = {}".format(payload))
         success = self._set_group_state(group, payload)
         if success:
             self._set_group_current_color(group, color)

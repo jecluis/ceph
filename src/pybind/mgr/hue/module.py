@@ -15,11 +15,6 @@ class Module(MgrModule):
 
     COMMANDS = [
         {
-            'cmd': 'hue config assimilate',
-            'desc': 'Assimilate a full configuration file',
-            'perm': 'rw'
-        },
-        {
             'cmd': 'hue config get',
             'desc': 'Obtain current config',
             'perm': 'r'
@@ -68,7 +63,7 @@ class Module(MgrModule):
 
         self._shutdown = False
         self._event = threading.Event()
-        self._config = {}
+        self._config = None
         self._raw_config = {}
 
         self._notify_lock = threading.Lock()
@@ -96,12 +91,7 @@ class Module(MgrModule):
                                bridge.get_user()))
 
     def _save_config(self):
-        cfg = {
-            'version': self.MODULE_VERSION,
-            'config': dict([
-                (name, cfg.get_raw_config())
-                for name, cfg in self._config.items()])
-        }
+        cfg = self._config.to_jsonish()
         self.log.debug('saving config: {}'.format(json.dumps(cfg)))
         self.mgr.set_store(self.CONFIG_KEY, json.dumps(cfg))
 
@@ -154,7 +144,7 @@ class Module(MgrModule):
 
     def get_bridge(self, br_name):
         assert self._config.has_bridge(br_name)
-        return config.get_bridge(br_name)
+        return self._config.get_bridge(br_name)
 
     def handle_health_status(self, status):
         if status == 'HEALTH_OK':
@@ -216,48 +206,6 @@ class Module(MgrModule):
 
         self._event.set()
 
-    def handle_cmd_setup(self, cmd, inbuf):
-        self.log.debug('handle setup')
-
-        if 'bridge' not in cmd:
-            return (-errno.EINVAL, '',
-                    'Command requires a bridge name to be provided.')
-        bridge_name = cmd['bridge']
-        if not isinstance(bridge_name, str) or len(bridge_name) == 0:
-            return (-errno.EINVAL, '',
-                    'Command requires a non-empty string as bridge name.')
-
-        if inbuf is None:
-            return (-errno.EINVAL, '',
-                    'Command requires a config to be provided.')
-
-        if not isinstance(inbuf, str):
-            return (-errno.EINVAL, '', 'Provided config is not a string')
-        try:
-            cfg = config.Config.create(bridge_name, inbuf)
-        except config.MalformedConfig as e:
-            return (-errno.EINVAL, '',
-                    'Error assimilating config: {}'.format(e.message))
-
-        if not cfg.has_address():
-            return (-errno.EINVAL, '',
-                    'Missing \'address\' in config')
-
-        if not cfg.has_user():
-            out_msg = 'Configuration does not specify a Hue Bridge user. ' \
-                      'You may create one at a later time using ' \
-                      '`ceph hue create-user {}`'.format(bridge_name)
-        else:
-            out_msg = 'Bridge \'{}\' has been set up'.format(bridge_name)
-
-        if bridge_name in self._config:
-            self.log.debug('replacing config for \'{}\''.format(bridge_name))
-        self._config[bridge_name] = cfg
-        self._save_config()
-        self._load_config()
-        self._init_bridges()
-        return (0, out_msg, '')
-
     def handle_cmd_create_user(self, cmd):
         self.log.debug('handle create user')
 
@@ -294,14 +242,8 @@ class Module(MgrModule):
                       'inbuf(len={}, type={}), cmd="{}")'.format(
                           len(inbuf), type(inbuf), cmd))
 
-        if cmd['prefix'] == 'hue setup':
-            return self.handle_cmd_setup(cmd, inbuf)
-        elif cmd['prefix'] == 'hue create-user':
+        if cmd['prefix'] == 'hue create-user':
             return self.handle_cmd_create_user(cmd)
-        elif cmd['prefix'] == 'hue config get':
-            return self.handle_cmd_config_get(cmd)
-        elif cmd['prefix'] == 'hue config set':
-            return self.handle_cmd_config_set(cmd, inbuf)
         elif cmd['prefix'].startswith('hue bridge'):
             return self.handle_cmd_bridge(cmd, inbuf)
         else:
@@ -309,11 +251,98 @@ class Module(MgrModule):
                     '',
                     'Unknown command \'{}\''.format(cmd['prefix']))
 
+    @CLIWriteCommand('hue config assimilate', '',
+                     'Assimilate a full configuration file')
+    def cmd_config_assimilate(self, inbuf):
+        self.log.debug("cmd.config_assimilate: {}".format(inbuf))
+
+        if inbuf is None:
+            return (-errno.EINVAL, '',
+                    'Command requires a config to be provided.')
+
+        if not isinstance(inbuf, str):
+            return (-errno.EINVAL, '', 'Provided config is not a string')
+        try:
+            cfg = config.Config.assimilate(inbuf)
+        except config.MalformedConfig as e:
+            return (-errno.EINVAL, '',
+                    'Error assimilating config: {}'.format(e.message))
+
+        num_bridges = len(cfg.get_bridges())
+        out_msg = "Assimilated config with {} bridge{}.".format(
+                num_bridges, ("s" if num_bridges != 0 else ""))
+
+        missing_addresses = []
+        missing_users = []
+        for br_name, bridge in cfg.get_bridges().items():
+            if not bridge.has_address():
+                missing_addresses.append(br_name)
+            if not bridge.has_user():
+                missing_users.append(br_name)
+
+        if len(missing_addresses) > 0:
+            out_msg += " Please be aware that the following bridges " \
+                       "are missing addresses: {}.".format(missing_addresses)
+        if len(missing_users) > 0:
+            out_msg += " Please be aware that the following bridges " \
+                       "are missing users: {}.".format(missing_users)
+
+        if self._config is not None:
+            self.log.debug("cmd.config_assimilate: replace existing")
+        self._config = cfg
+        self._save_config()
+        self._load_config()
+        self._init_bridges()
+        return (0, out_msg, '')
+
+    @CLIReadCommand('hue config get', '',
+                     'Show current configuration, in json.')
+    def cmd_config_show(self):
+        d = self._config.to_jsonish()
+        return (0, json.dumps(d), '')
+
+    @CLIWriteCommand('hue bridge setup',
+                     'name=bridge,type=CephString',
+                     'Setup a Hue bridge. Requires a config file.')
+    def cmd_bridge_setup(self, bridge, inbuf):
+        self.log.debug("cmd.bridge_setup: name = {}, inbuf = {}".format(
+            bridge, inbuf))
+        if 'bridge' not in cmd:
+            return (-errno.EINVAL, '',
+                    'Command requires a bridge name to be provided.')
+        bridge_name = cmd['bridge']
+        if not isinstance(bridge_name, str) or len(bridge_name) == 0:
+            return (-errno.EINVAL, '',
+                    'Command requires a non-empty string as bridge name.')
+        return (0, 'not implemented', '')
+
     @CLIWriteCommand('hue bridge enable',
                      'name=bridge,type=CephString '
                      'name=force,type=CephChoices,strings=--force,req=false',
-                     'Enable a bridge')
+                     'Enable a bridge.')
     def cmd_bridge_enable(self, bridge, force=None):
-        self.log.debug("cmd_bridge_enable: bridge = {}, force = {}".format(
+        self.log.debug("cmd.bridge_enable: bridge = {}, force = {}".format(
             bridge, force))
-        return 0, 'not implemented', ''
+        to_force = False
+        if force is not None and force == "--force":
+            to_force = True
+        res = self._config.bridge_enable(bridge, to_force)
+        if res:
+            out_msg = "Bridge {} enabled".format(bridge)
+            self._save_config()
+        else:
+            out_msg = "Bridge {} was not enabled".format(bridge)
+        return 0, out_msg, ''
+
+    @CLIWriteCommand('hue bridge disable',
+                     'name=bridge,type=CephString',
+                     'Disable a bridge.')
+    def cmd_bridge_disable(self, bridge):
+        self.log.debug("cmd.bridge_disable: bridge = {}".format(bridge))
+        res = self._config.bridge_disable(bridge)
+        if res:
+            self._save_config()
+        return (0, "Bridge {} was{} disabled".format(
+            bridge,
+            " not" if not res else ""), '')
+

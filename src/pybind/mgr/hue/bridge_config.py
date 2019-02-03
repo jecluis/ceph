@@ -110,7 +110,7 @@ class BridgeConfig:
     def get_name(self):
         return self._name
 
-    def _get_groups(self):
+    def _get_groups_jsonish(self):
         groups_lst = []
         for group in self._groups:
             groups_lst.append(group.to_jsonish())
@@ -121,9 +121,12 @@ class BridgeConfig:
                 'name': self._name,
                 'address': self._address,
                 'user': self._user,
-                'groups': self._get_groups()
+                'groups': self._get_groups_jsonish()
             }
         return d
+
+    def get_groups(self):
+        return self._groups
 
     def get_status_groups(self, status_str):
         groups_lst = []
@@ -133,6 +136,9 @@ class BridgeConfig:
                 continue
             groups_lst.append(group)
         return groups_lst
+
+    def is_okay_to_enable(self):
+        return self.has_address() and self.has_user()
 
 class BridgeGroup:
 
@@ -263,6 +269,9 @@ class BridgeStatusColor:
     def is_alert(self):
         return self._type == self.TYPE_ALERT
 
+    def get_color(self):
+        return self._color
+
 
 class Bridge(BridgeConfig):
 
@@ -293,8 +302,17 @@ class Bridge(BridgeConfig):
     def disable(self):
         log.debug("bridge.disable: disabling bridge {}".format(self._name))
         super().disable()
-        self._bridge.shutdown()
+        self._shutdown()
 
     def set_group_state(self, group, status_color):
         group_name = group.get_name()
         return self._bridge.set_group_state(group_name, status_color)
+
+    def _shutdown(self):
+        log.debug("bridge._shutdown: shutdown bridge {}".format(self._name))
+        status_groups = self.get_groups()
+        for group in status_groups:
+            gr_name = group.get_name()
+            log.debug("bridge._shutdown: shutdown group {}".format(gr_name))
+            self._bridge.shutdown_group(gr_name)
+

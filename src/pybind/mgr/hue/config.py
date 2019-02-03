@@ -10,7 +10,7 @@ class MalformedConfig(Exception):
 class Config:
 
     def __init__(self):
-        self._format = None
+        self._format = 1
         self._version = 0
         self._bridges = {}
         self._enabled_bridges = []
@@ -35,6 +35,7 @@ class Config:
         version = int(cfg['version']) if 'version' in cfg else None
         config_format = cfg['format'] if 'format' in cfg else None
         bridge_lst = cfg['bridges'] if 'bridges' in cfg else None
+        self._enabled_bridges = cfg['enabled'] if 'enabled' in cfg else []
 
         for bridge in bridge_lst:
             try:
@@ -98,15 +99,24 @@ class Config:
     def get_bridge(self, name):
         return self._bridges[name] if self.has_bridge(name) else None
 
+    def get_enabled_bridges(self):
+        return self._enabled_bridges
+
     def is_bridge_enabled(self, name):
         if not self.has_bridge(name):
             return False
         return name in self._enabled_bridges
 
-    def bridge_enable(self, name):
+    def bridge_enable(self, name, force=False):
         if not self.has_bridge(name) or \
-           not self.is_bridge_enabled(name):
+           self.is_bridge_enabled(name):
             return False
+        if not self.get_bridge(name).is_okay_to_enable():
+            if force:
+                log.debug("config: enabling bridge {} even though "
+                          "it's not okay".format(name))
+            else:
+                return False
         self._enabled_bridges.append(name)
         self._bridges[name].enable()
         return True
