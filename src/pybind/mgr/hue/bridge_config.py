@@ -8,6 +8,9 @@ class MalformedBridgeConfig(Exception):
 class MalformedBridgeGroup(MalformedBridgeConfig):
     pass
 
+class BridgeError(Exception):
+    pass
+
 def UnknownColor(Exception):
     pass
 def UnknownColorType(Exception):
@@ -71,6 +74,9 @@ class BridgeConfig:
         if 'groups' in cfg:
             self._assimilate_groups(cfg['groups'])
         log.debug("bridge.assimilate: assimilated")
+
+    def create_user(self):
+        raise NotImplementedError
 
     def enable(self):
         self._is_enabled = True
@@ -297,6 +303,17 @@ class Bridge(BridgeConfig):
         except HueError as e:
             log.info("bridge.init: error self-testing hue: {}".format(e))
             return False
+        return True
+
+    def create_user(self):
+        log.debug("bridge.create_user: creating user for bridge {}".format(
+            self._name))
+
+        try:
+            self._bridge.user_create()
+        except HueError as e:
+            log.info("bridge.create_user: error creating user: {}".format(e))
+            raise Bridge
         return True
 
     def disable(self):

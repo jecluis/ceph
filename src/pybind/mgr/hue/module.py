@@ -346,3 +346,40 @@ class Module(MgrModule):
             bridge,
             " not" if not res else ""), '')
 
+    @CLIWriteCommand('hue bridge create-user',
+                     'name=bridge,type=CephString '
+                     'name=ready,type=CephChoices,string=--pressed,req=false',
+                     'Creates a user in the bridge. Calling this command '
+                     'requires physical access to the bridge, and the bridge '
+                     'button to be pressed, before running the command with '
+                     'the `--pressed` argument.')
+    def cmd_bridge_create_user(self, bridge, read):
+        if bridge is None or len(bridge.strip()) == 0:
+            return (-errno.EINVAL, '',
+                    "Bridge name not specified.")
+        if not self._config.has_bridge(bridge):
+            return (-errno.ENOENT, '',
+                    "Bridge {} does not exist".format(bridge))
+
+        if read is None or len(read.strip()) == 0 or \
+           read != "--pressed":
+            return (-errno.EINVAL, '',
+                    "Creating a user requires the bridge button to be "
+                    "pressed. Once you do that, please pass `--pressed` "
+                    "so we can proceed with user creation.")
+
+        bridge = self._config.get_bridge(bridge)
+        assert bridge is not None
+        res = bridge.create_user()
+
+        return (0, "User created on bridge {}", '')
+
+    @CLIWriteCommand('hue bridge set-user',
+                     'name=bridge,type=CephString '
+                     'name=user,type=CephString',
+                     'Set a user for the given bridge. Presumes an existing '
+                     'user. If you don\'t have one, please use '
+                     '`hue bridge create-user` instead.')
+    def cmd_bridge_set_user(self, bridge, user):
+        return (0, "User set for bridge {}".format(bridge), '')
+

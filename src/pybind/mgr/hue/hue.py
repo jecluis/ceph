@@ -244,8 +244,10 @@ class HueBridge:
     @classmethod
     def user_create(cls, address):
         (url, method) = cls.get_url("user-create", addr=address)
-        assert len(url) > 0
-        assert len(method) > 0
+        assert url is not None
+        assert method is not None
+        assert len(url.strip()) > 0
+        assert len(method.strip()) > 0
 
         log.debug("user_create: url = '{}', addr = '{}'".format(
             url, address))
@@ -267,6 +269,9 @@ class HueBridge:
         assert 'username' in res
         assert len(res['username']) > 0
         return res['username']
+
+    def user_create(self):
+        return self.user_create(self.address)
 
     def get_groups(self):
         log.debug('obtaining bridge groups from {} with user {}'.format(
