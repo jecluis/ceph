@@ -429,7 +429,6 @@ private:
   bool preprocess_pg_ready_to_merge(MonOpRequestRef op);
   bool prepare_pg_ready_to_merge(MonOpRequestRef op);
 
-  int _check_remove_pool(int64_t pool_id, const pg_pool_t &pool, ostream *ss);
   bool _check_become_tier(
       int64_t tier_pool_id, const pg_pool_t *tier_pool,
       int64_t base_pool_id, const pg_pool_t *base_pool,
@@ -438,15 +437,63 @@ private:
       int64_t base_pool_id, const pg_pool_t *base_pool, const pg_pool_t *tier_pool,
       int *err, ostream *ss) const;
 
-  int _prepare_remove_pool(int64_t pool, ostream *ss, bool no_fake);
-  int _prepare_rename_pool(int64_t pool, string newname);
-
+  void _pool_op_reply(MonOpRequestRef op,
+                      int ret, epoch_t epoch, bufferlist *blp=NULL);
   bool enforce_pool_op_caps(MonOpRequestRef op);
+
   bool preprocess_pool_op (MonOpRequestRef op);
-  bool preprocess_pool_op_create (MonOpRequestRef op);
   bool prepare_pool_op (MonOpRequestRef op);
+  bool preprocess_pool_op_create (MonOpRequestRef op);
   bool prepare_pool_op_create (MonOpRequestRef op);
+  int prepare_new_pool(MonOpRequestRef op);
   bool prepare_pool_op_delete(MonOpRequestRef op);
+
+  int prepare_new_pool(string& name,
+		       int crush_rule,
+		       const string &crush_rule_name,
+                       unsigned pg_num, unsigned pgp_num,
+		       unsigned pg_num_min,
+                       uint64_t repl_size,
+		       const uint64_t target_size_bytes,
+		       const float target_size_ratio,
+		       const string &erasure_code_profile,
+                       const unsigned pool_type,
+                       const uint64_t expected_num_objects,
+                       FastReadType fast_read,
+		       ostream *ss);
+  int prepare_pool_size(const unsigned pool_type,
+			const string &erasure_code_profile,
+                        uint8_t repl_size,
+			unsigned *size, unsigned *min_size,
+			ostream *ss);
+  int prepare_pool_stripe_width(const unsigned pool_type,
+				const string &erasure_code_profile,
+				unsigned *stripe_width,
+				ostream *ss);
+
+  int _prepare_remove_pool(int64_t pool, ostream *ss, bool no_fake);
+  int _check_remove_pool(int64_t pool_id, const pg_pool_t &pool, ostream *ss);
+  int _prepare_rename_pool(int64_t pool, string newname);
+  bool update_pools_status();
+  void set_pool_flags(int64_t pool_id, uint64_t flags);
+  void clear_pool_flags(int64_t pool_id, uint64_t flags);
+
+  int prepare_command_pool_set(const cmdmap_t& cmdmap,
+                               stringstream& ss);
+
+  int prepare_command_pool_application(const string &prefix,
+                                       const cmdmap_t& cmdmap,
+                                       stringstream& ss);
+  int preprocess_command_pool_application(const string &prefix,
+                                          const cmdmap_t& cmdmap,
+                                          stringstream& ss,
+                                          bool *modified);
+  int _command_pool_application(const string &prefix,
+                                       const cmdmap_t& cmdmap,
+                                       stringstream& ss,
+                                       bool *modified,
+                                       bool preparing);
+
   int crush_rename_bucket(const string& srcname,
 			  const string& dstname,
 			  ostream *ss);
@@ -478,34 +525,7 @@ private:
   int parse_erasure_code_profile(const vector<string> &erasure_code_profile,
 				 map<string,string> *erasure_code_profile_map,
 				 ostream *ss);
-  int prepare_pool_size(const unsigned pool_type,
-			const string &erasure_code_profile,
-                        uint8_t repl_size,
-			unsigned *size, unsigned *min_size,
-			ostream *ss);
-  int prepare_pool_stripe_width(const unsigned pool_type,
-				const string &erasure_code_profile,
-				unsigned *stripe_width,
-				ostream *ss);
   int check_pg_num(int64_t pool, int pg_num, int size, ostream* ss);
-  int prepare_new_pool(string& name,
-		       int crush_rule,
-		       const string &crush_rule_name,
-                       unsigned pg_num, unsigned pgp_num,
-		       unsigned pg_num_min,
-                       uint64_t repl_size,
-		       const uint64_t target_size_bytes,
-		       const float target_size_ratio,
-		       const string &erasure_code_profile,
-                       const unsigned pool_type,
-                       const uint64_t expected_num_objects,
-                       FastReadType fast_read,
-		       ostream *ss);
-  int prepare_new_pool(MonOpRequestRef op);
-
-  void set_pool_flags(int64_t pool_id, uint64_t flags);
-  void clear_pool_flags(int64_t pool_id, uint64_t flags);
-  bool update_pools_status();
 
   bool _is_removed_snap(int64_t pool_id, snapid_t snapid);
   bool _is_pending_removed_snap(int64_t pool_id, snapid_t snapid);
@@ -553,9 +573,6 @@ private:
 
   bool prepare_set_flag(MonOpRequestRef op, int flag);
   bool prepare_unset_flag(MonOpRequestRef op, int flag);
-
-  void _pool_op_reply(MonOpRequestRef op,
-                      int ret, epoch_t epoch, bufferlist *blp=NULL);
 
   struct C_Booted : public C_MonOp {
     OSDMonitor *cmon;
@@ -706,22 +723,6 @@ public:
       const map<string,string>& secrets,
       stringstream &ss,
       Formatter *f);
-
-  int prepare_command_pool_set(const cmdmap_t& cmdmap,
-                               stringstream& ss);
-
-  int prepare_command_pool_application(const string &prefix,
-                                       const cmdmap_t& cmdmap,
-                                       stringstream& ss);
-  int preprocess_command_pool_application(const string &prefix,
-                                          const cmdmap_t& cmdmap,
-                                          stringstream& ss,
-                                          bool *modified);
-  int _command_pool_application(const string &prefix,
-                                       const cmdmap_t& cmdmap,
-                                       stringstream& ss,
-                                       bool *modified,
-                                       bool preparing);
 
   bool handle_osd_timeouts(const utime_t &now,
 			   std::map<int,utime_t> &last_osd_report);
