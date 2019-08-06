@@ -686,6 +686,7 @@ public:
   bool preprocess_command(MonOpRequestRef op);
   bool prepare_command(MonOpRequestRef op);
   bool prepare_command_impl(MonOpRequestRef op, const cmdmap_t& cmdmap);
+
   bool preprocess_pool_command(MonOpRequestRef op);
   bool prepare_pool_command(MonOpRequestRef op, const cmdmap_t& cmdmap);
   bool preprocess_crush_command(MonOpRequestRef op);
@@ -697,16 +698,24 @@ public:
       const bool check_osd_exists,
       int32_t* existing_id,
       stringstream& ss);
+  void do_osd_create(const int32_t id, const uuid_d& uuid,
+		     const string& device_class,
+		     int32_t* new_id);
   int prepare_command_osd_create(
       const int32_t id,
       const uuid_d& uuid,
       int32_t* existing_id,
       stringstream& ss);
-  void do_osd_create(const int32_t id, const uuid_d& uuid,
-		     const string& device_class,
-		     int32_t* new_id);
   int prepare_command_osd_purge(int32_t id, stringstream& ss);
   int prepare_command_osd_destroy(int32_t id, stringstream& ss);
+  int prepare_command_osd_remove(int32_t id);
+  int prepare_command_osd_new(
+      MonOpRequestRef op,
+      const cmdmap_t& cmdmap,
+      const map<string,string>& secrets,
+      stringstream &ss,
+      Formatter *f);
+
   int _prepare_command_osd_crush_remove(
       CrushWrapper &newcrush,
       int32_t id,
@@ -720,13 +729,6 @@ public:
       int32_t ancestor,
       bool has_ancestor,
       bool unlink_only);
-  int prepare_command_osd_remove(int32_t id);
-  int prepare_command_osd_new(
-      MonOpRequestRef op,
-      const cmdmap_t& cmdmap,
-      const map<string,string>& secrets,
-      stringstream &ss,
-      Formatter *f);
 
   bool handle_osd_timeouts(const utime_t &now,
 			   std::map<int,utime_t> &last_osd_report);
