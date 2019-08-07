@@ -661,11 +661,11 @@ bool OSDMonitor::prepare_osd_command(
   op->mark_osdmon_event(__func__);
   MMonCommand *m = static_cast<MMonCommand*>(op->get_req());
 
-  bool ret = false;
   stringstream ss;
   string rs;
   bufferlist rdata;
   int err = 0;
+  bool is_err = false;
 
   string format;
   cmd_getval(cct, cmdmap, "format", format, string("plain"));
@@ -710,10 +710,7 @@ bool OSDMonitor::prepare_osd_command(
 
     pending_inc.new_max_osd = newmax;
     ss << "set new max_osd = " << pending_inc.new_max_osd;
-    getline(ss, rs);
-    wait_for_finished_proposal(op, new Monitor::C_Command(mon, op, 0, rs,
-					      get_last_committed() + 1));
-    return true;
+    goto update;
 
   } else if (prefix == "osd set-full-ratio" ||
 	     prefix == "osd set-backfillfull-ratio" ||
@@ -732,10 +729,8 @@ bool OSDMonitor::prepare_osd_command(
     else if (prefix == "osd set-nearfull-ratio")
       pending_inc.new_nearfull_ratio = n;
     ss << prefix << " " << n;
-    getline(ss, rs);
-    wait_for_finished_proposal(op, new Monitor::C_Command(mon, op, 0, rs,
-					      get_last_committed() + 1));
-    return true;
+    goto update;
+
   } else if (prefix == "osd set-require-min-compat-client") {
     string v;
     cmd_getval(cct, cmdmap, "version", v);
@@ -797,10 +792,8 @@ bool OSDMonitor::prepare_osd_command(
     }
     ss << "set require_min_compat_client to " << vno;
     pending_inc.new_require_min_compat_client = vno;
-    getline(ss, rs);
-    wait_for_finished_proposal(op, new Monitor::C_Command(mon, op, 0, rs,
-							  get_last_committed() + 1));
-    return true;
+    goto update;
+
   } else if (prefix == "osd pause") {
     return prepare_set_flag(op, CEPH_OSDMAP_PAUSERD | CEPH_OSDMAP_PAUSEWR);
 
@@ -970,6 +963,7 @@ bool OSDMonitor::prepare_osd_command(
     }
     pending_inc.new_require_osd_release = rel;
     goto update;
+
   } else if (prefix == "osd down" ||
              prefix == "osd out" ||
              prefix == "osd in" ||
@@ -1109,10 +1103,7 @@ bool OSDMonitor::prepare_osd_command(
       }
     }
     if (any) {
-      getline(ss, rs);
-      wait_for_finished_proposal(op, new Monitor::C_Command(mon, op, err, rs,
-						get_last_committed() + 1));
-      return true;
+      goto update;
     }
   } else if (prefix == "osd set-group" ||
              prefix == "osd unset-group" ||
@@ -1271,10 +1262,7 @@ bool OSDMonitor::prepare_osd_command(
       any = true;
     }
     if (any) {
-      getline(ss, rs);
-      wait_for_finished_proposal(op, new Monitor::C_Command(mon, op, err, rs,
-                                 get_last_committed() + 1));
-      return true;
+      goto update;
     }
 
   } else if (prefix == "osd reweight") {
@@ -1300,11 +1288,9 @@ bool OSDMonitor::prepare_osd_command(
     }
     if (osdmap.exists(id)) {
       pending_inc.new_weight[id] = ww;
-      ss << "reweighted osd." << id << " to " << w << " (" << std::hex << ww << std::dec << ")";
-      getline(ss, rs);
-      wait_for_finished_proposal(op, new Monitor::C_Command(mon, op, 0, rs,
-						get_last_committed() + 1));
-      return true;
+      ss << "reweighted osd." << id << " to " << w << " (" << std::hex
+	 << ww << std::dec << ")";
+      goto update;
     } else {
       ss << "osd." << id << " does not exist";
       err = -ENOENT;
@@ -1319,6 +1305,8 @@ bool OSDMonitor::prepare_osd_command(
       goto reply;
     }
     pending_inc.new_weight.insert(weights.begin(), weights.end());
+
+    // we can't jump to 'update' because we're doing something different
     wait_for_finished_proposal(
 	op,
 	new Monitor::C_Command(mon, op, 0, rs, rdata, get_last_committed() + 1));
@@ -1350,10 +1338,7 @@ bool OSDMonitor::prepare_osd_command(
       epoch_t e = osdmap.get_info(id).down_at;
       pending_inc.new_lost[id] = e;
       ss << "marked osd lost in epoch " << e;
-      getline(ss, rs);
-      wait_for_finished_proposal(op, new Monitor::C_Command(mon, op, 0, rs,
-						get_last_committed() + 1));
-      return true;
+      goto update;
     }
 
   } else if (prefix == "osd destroy-actual" ||
@@ -1455,6 +1440,8 @@ bool OSDMonitor::prepare_osd_command(
       ss << "purged osd." << id;
     }
 
+    // can't jump to 'update' because we're doing something else before
+    // returning.
     getline(ss, rs);
     wait_for_finished_proposal(op,
         new Monitor::C_Command(mon, op, 0, rs, get_last_committed() + 1));
@@ -1503,6 +1490,9 @@ bool OSDMonitor::prepare_osd_command(
       goto reply;
     }
 
+    // can't jump to 'update' because we're doing something else before
+    // returning. And we're also waiting on a different thing.
+
     wait_for_finished_proposal(op,
         new Monitor::C_Command(mon, op, 0, rs, rdata,
                                get_last_committed() + 1));
@@ -1539,8 +1529,7 @@ bool OSDMonitor::prepare_osd_command(
     err = prepare_command_osd_create(id, uuid, &new_id, ss);
     if (err < 0) {
       if (err == -EAGAIN) {
-        wait_for_finished_proposal(op, new C_RetryMessage(this, op));
-        return true;
+	goto wait;
       }
       // a check has failed; reply to the user.
       goto reply;
@@ -1572,6 +1561,8 @@ bool OSDMonitor::prepare_osd_command(
       ss << new_id;
       rdata.append(ss);
     }
+
+    // can't jump to 'update' because we're doing a different thing.
     wait_for_finished_proposal(op,
         new Monitor::C_Command(mon, op, 0, rs, rdata,
                                get_last_committed() + 1));
@@ -1583,11 +1574,12 @@ bool OSDMonitor::prepare_osd_command(
 
  reply:
   getline(ss, rs);
-  if (err < 0 && rs.length() == 0) {
+  is_err = (err < 0 && rs.length() == 0);
+  if (is_err) {
     rs = cpp_strerror(err);
   }
   mon->reply_command(op, err, rs, rdata, get_last_committed());
-  return ret;
+  return !is_err;
 
  update:
   getline(ss, rs);
@@ -1595,18 +1587,7 @@ bool OSDMonitor::prepare_osd_command(
       new Monitor::C_Command(mon, op, 0, rs, get_last_committed() + 1));
   return true;
 
-/*
- * this is not currently used; there are branches relying on exactly doing the
- * same thing, but we need to consider whether we want to keep jumping or
- * letting the branches taking the appropriate decision - and then standardize
- * for the other labels.
- *
- * My guess is that, at this point in time, labels are preferable to letting
- * everyone do their thing (unless so specific that the labeled actions are
- * not enough)
- *
  wait:
   wait_for_finished_proposal(op, new C_RetryMessage(this, op));
   return true;
- */
 }
