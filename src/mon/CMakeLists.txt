@@ -9,6 +9,7 @@ set(lib_mon_srcs
   osd/pool.cc
   osd/crush.cc
   osd/osds.cc
+  osd/osd_cmds.cc
   MDSMonitor.cc
   CommandHandler.cc
   FSCommands.cc

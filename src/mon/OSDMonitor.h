@@ -691,6 +691,8 @@ public:
   bool prepare_pool_command(MonOpRequestRef op, const cmdmap_t& cmdmap);
   bool preprocess_crush_command(MonOpRequestRef op);
   bool prepare_crush_command(MonOpRequestRef op, const cmdmap_t& cmdmap);
+  bool preprocess_osd_command(MonOpRequestRef op);
+  bool prepare_osd_command(MonOpRequestRef op, const cmdmap_t& cmdmap);
 
   int validate_osd_create(
       const int32_t id,
