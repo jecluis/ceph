@@ -693,6 +693,8 @@ public:
   bool prepare_crush_command(MonOpRequestRef op, const cmdmap_t& cmdmap);
   bool preprocess_osd_command(MonOpRequestRef op);
   bool prepare_osd_command(MonOpRequestRef op, const cmdmap_t& cmdmap);
+  bool preprocess_pg_command(MonOpRequestRef op);
+  bool prepare_pg_command(MonOpRequestRef op, const cmdmap_t& cmdmap);
 
   int validate_osd_create(
       const int32_t id,

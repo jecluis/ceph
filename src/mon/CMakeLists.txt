@@ -10,6 +10,7 @@ set(lib_mon_srcs
   osd/crush.cc
   osd/osds.cc
   osd/osd_cmds.cc
+  osd/pg_cmds.cc
   MDSMonitor.cc
   CommandHandler.cc
   FSCommands.cc

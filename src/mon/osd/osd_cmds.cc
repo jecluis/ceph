@@ -1568,6 +1568,45 @@ bool OSDMonitor::prepare_osd_command(
                                get_last_committed() + 1));
     return true;
 
+  } else if (prefix == "osd primary-affinity") {
+    int64_t id;
+    if (!cmd_getval(cct, cmdmap, "id", id)) {
+      ss << "invalid osd id value '"
+         << cmd_vartype_stringify(cmdmap.at("id")) << "'";
+      err = -EINVAL;
+      goto reply;
+    }
+    double w;
+    if (!cmd_getval(cct, cmdmap, "weight", w)) {
+      ss << "unable to parse 'weight' value '"
+	 << cmd_vartype_stringify(cmdmap.at("weight")) << "'";
+      err = -EINVAL;
+      goto reply;
+    }
+    long ww = (int)((double)CEPH_OSD_MAX_PRIMARY_AFFINITY*w);
+    if (ww < 0L) {
+      ss << "weight must be >= 0";
+      err = -EINVAL;
+      goto reply;
+    }
+    if (osdmap.require_min_compat_client != ceph_release_t::unknown &&
+	osdmap.require_min_compat_client < ceph_release_t::firefly) {
+      ss << "require_min_compat_client "
+	 << osdmap.require_min_compat_client
+	 << " < firefly, which is required for primary-affinity";
+      err = -EPERM;
+      goto reply;
+    }
+    if (osdmap.exists(id)) {
+      pending_inc.new_primary_affinity[id] = ww;
+      ss << "set osd." << id << " primary-affinity to " << w << " ("
+	 << ios::hex << ww << ios::dec << ")";
+      goto update;
+    } else {
+      ss << "osd." << id << " does not exist";
+      err = -ENOENT;
+      goto reply;
+    }
   } else {
     err = -EINVAL;
   }

@@ -93,6 +93,8 @@
 #include "messages/MPoolOpReply.h"
 
 
+#include "mon/osd/Command.h"
+
 #define dout_subsys ceph_subsys_mon
 
 namespace { // anonymous namespace
@@ -221,6 +223,96 @@ enum osd_pool_get_choices {
 } // anonymous namespace
 
 
+struct OSDMonitorReadCommand :
+  public ReadCommand<OSDMonitor, OSDMap, OSDMap::Incremental>
+{
+  OSDMonitorReadCommand(Monitor *_mon, OSDMonitor *_svc, CephContext *cct) :
+    ReadCommand<OSDMonitor, OSDMap, OSDMap::Incremental>(_mon, _svc, cct)
+  { }
+
+  ~OSDMonitorReadCommand() { }
+};
+
+struct OSDMonitorWriteCommand :
+  public WriteCommand<OSDMonitor, OSDMap, OSDMap::Incremental>
+{
+  OSDMonitorWriteCommand(Monitor *mon, OSDMonitor *_svc, CephContext *_cct) :
+    WriteCommand<OSDMonitor, OSDMap, OSDMap::Incremental>(mon, _svc, _cct)
+  { }
+  ~OSDMonitorWriteCommand() { }
+};
+
+struct PoolsLs : public OSDMonitorReadCommand
+{
+  CephContext *cct;
+  OSDMonitor *osdmon;
+
+  PoolsLs(Monitor *_mon, OSDMonitor *_svc, CephContext *_cct) :
+    OSDMonitorReadCommand(_mon, _svc, _cct),
+    cct(_cct),
+    osdmon(_svc)
+  { }
+
+  bool handles_command(const string &prefix) override {
+    return (prefix == "osd pool ls");
+  }
+
+ protected:
+  bool do_preprocess(
+      MonOpRequestRef op,
+      const cmdmap_t &cmdmap,
+      stringstream &ss,
+      bufferlist rdata,
+      FormatterRef f,
+      const OSDMap &stable_map) override;
+};
+
+
+bool PoolsLs::do_preprocess(
+    MonOpRequestRef op,
+    const cmdmap_t &cmdmap,
+    stringstream &ss,
+    bufferlist rdata,
+    FormatterRef f,
+    const OSDMap &osdmap)
+{
+  string detail;
+  cmd_getval(cct, cmdmap, "detail", detail);
+
+  if (!f && detail == "detail") {
+    ostringstream ss;
+    osdmap.print_pools(ss);
+    rdata.append(ss.str());
+  } else {
+    if (f)
+      f->open_array_section("pools");
+    for (map<int64_t,pg_pool_t>::const_iterator it = osdmap.get_pools().begin();
+	it != osdmap.get_pools().end();
+	++it) {
+      if (f) {
+	if (detail == "detail") {
+	  f->open_object_section("pool");
+	  f->dump_string("pool_name", osdmap.get_pool_name(it->first));
+	  it->second.dump(f.get());
+	  f->close_section();
+	} else {
+	  f->dump_string("pool_name", osdmap.get_pool_name(it->first));
+	}
+      } else {
+	rdata.append(osdmap.get_pool_name(it->first) + "\n");
+      }
+    }
+    if (f) {
+      f->close_section();
+      f->flush(rdata);
+    }
+  }
+
+  bool ret = reply_with_data(op, 0, ss, rdata, service->get_last_committed());
+  ceph_assert(ret == true);
+  return true;
+}
+
 /*
  *
  * pool command handling
@@ -256,6 +348,14 @@ bool OSDMonitor::preprocess_pool_command(
   string format;
   cmd_getval(cct, cmdmap, "format", format, string("plain"));
   boost::scoped_ptr<Formatter> f(Formatter::create(format));
+
+  // this is just a PoC
+  std::unique_ptr<PoolsLs> pls(new PoolsLs(mon, this, cct));
+
+  if (pls->handles_command(prefix)) {
+    dout(10) << __func__ << "pls handling " << prefix << dendl;
+    return pls->preprocess(op, cmdmap, osdmap);
+  }
 
   if (prefix == "osd pool ls") {
     string detail;
