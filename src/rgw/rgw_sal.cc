@@ -27,6 +27,8 @@
 #include "store/json_config/store.h"
 #include "rgw_d3n_datacache.h"
 
+#include "rgw_sal_simplefile.h"
+
 #ifdef WITH_RADOSGW_DBSTORE
 #include "rgw_sal_dbstore.h"
 #include "store/dbstore/config/store.h"
@@ -44,6 +46,9 @@
 
 extern "C" {
 extern rgw::sal::Store* newStore(void);
+#ifdef WITH_RADOSGW_SIMPLEFILE
+extern rgw::sal::Store* newSimpleFileStore(CephContext *cct);
+#endif // WITH_RADOS_SIMPLEFILE
 #ifdef WITH_RADOSGW_DBSTORE
 extern rgw::sal::Store* newDBStore(CephContext *cct);
 #endif
@@ -169,6 +174,18 @@ rgw::sal::Store* StoreManager::init_storage_provider(const DoutPrefixProvider* d
     lsubdout(cct, rgw, 1) << "rgw_d3n: rgw_d3n_l1_eviction_policy=" <<
       cct->_conf->rgw_d3n_l1_eviction_policy << dendl;
   }
+
+#ifdef WITH_RADOSGW_SIMPLEFILE
+  if (cfg.store_name.compare("simplefile") == 0) {
+    const auto& data_path =
+      g_conf().get_val<std::string>("rgw_simplefile_data_path");
+    ldpp_dout(dpp, 0) << "simplefile store init!" << dendl;
+    rgw::sal::SimpleFileStore *store =
+      new rgw::sal::SimpleFileStore(cct, data_path);
+    return store;
+  }
+#endif // WITH_RADOSGW_SIMPLEFILE
+
 #ifdef WITH_RADOSGW_DBSTORE
   else if (cfg.store_name.compare("dbstore") == 0) {
     store = newDBStore(cct);
@@ -275,6 +292,8 @@ rgw::sal::Store* StoreManager::init_raw_storage_provider(const DoutPrefixProvide
       delete store;
       return nullptr;
     }
+  } else if (cfg.store_name.compare("simplefile") == 0) {
+    store = newSimpleFileStore(cct);
   } else if (cfg.store_name.compare("dbstore") == 0) {
 #ifdef WITH_RADOSGW_DBSTORE
     store = newDBStore(cct);
@@ -354,6 +373,11 @@ StoreManager::Config StoreManager::get_config(bool admin, CephContext* cct)
 #ifdef WITH_RADOSGW_DBSTORE
   else if (config_store == "dbstore") {
     cfg.store_name = "dbstore";
+  }
+#endif
+#ifdef WITH_RADOSGW_SIMPLEFILE
+  else if (config_store == "simplefile") {
+    cfg.store_name = "simplefile";
   }
 #endif
 #ifdef WITH_RADOSGW_MOTR
