@@ -729,6 +729,9 @@ class SimpleFileStore : public StoreStore {
   }
 
   virtual void register_admin_apis(RGWRESTMgr * mgr) override;
+
+  // TODO make proper bucket path
+  std::filesystem::path buckets_path() const { return data_path; };
 };
 
 }  // namespace rgw::sal
