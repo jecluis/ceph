@@ -30,6 +30,7 @@
 #include "services/svc_zone.h"
 #include "services/svc_zone_utils.h"
 
+#include "store/simplefile/notification.h"
 #define dout_subsys ceph_subsys_rgw
 
 using namespace std;
@@ -90,19 +91,29 @@ std::unique_ptr<Completions> SimpleFileStore::get_completions(void) {
 
 // Store > Notifications {{{
 std::unique_ptr<Notification> SimpleFileStore::get_notification(
-    rgw::sal::Object *obj, rgw::sal::Object *src_obj, struct req_state *s,
-    rgw::notify::EventType event_type, const std::string *object_name) {
-  ldout(ctx(), 10) << __func__ << ": TODO" << dendl;
-  return nullptr;
+  rgw::sal::Object *obj,
+  rgw::sal::Object *src_obj,
+  struct req_state *s,
+  rgw::notify::EventType event_type,
+  const std::string *object_name
+) {
+  ldout(ctx(), 10) << __func__ << ": return stub notification" << dendl;
+  return std::make_unique<SimpleFileNotification>(obj, src_obj, event_type);
 }
 
 std::unique_ptr<Notification> SimpleFileStore::get_notification(
-    const DoutPrefixProvider *dpp, rgw::sal::Object *obj,
-    rgw::sal::Object *src_obj, rgw::notify::EventType event_type,
-    rgw::sal::Bucket *_bucket, std::string &_user_id, std::string &_user_tenant,
-    std::string &_req_id, optional_yield y) {
-  ldout(ctx(), 10) << __func__ << ": TODO" << dendl;
-  return nullptr;
+  const DoutPrefixProvider *dpp,
+  rgw::sal::Object *obj,
+  rgw::sal::Object *src_obj,
+  rgw::notify::EventType event_type,
+  rgw::sal::Bucket *_bucket,
+  std::string &_user_id,
+  std::string &_user_tenant,
+  std::string &_req_id,
+  optional_yield y
+) {
+  ldpp_dout(dpp, 10) << __func__ << ": return stub notification" << dendl;
+  return std::make_unique<SimpleFileNotification>(obj, src_obj, event_type);
 }
 
 // }}}
