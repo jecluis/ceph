@@ -30,6 +30,12 @@
 #include "store/simplefile/object.h"
 #include "store/simplefile/zone.h"
 
+
+#define lsfs_dout(_dpp, _lvl) \
+  ldpp_dout(_dpp, _lvl) << "> " << this->get_cls_name() \
+                        << "::" << __func__ << " "
+
+
 namespace rgw::sal {
 
 class SimpleFileStore;
