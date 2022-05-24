@@ -104,7 +104,7 @@ class SimpleFileStore : public StoreStore {
   virtual bool is_meta_master() override { return true; }
   virtual std::unique_ptr<Object> get_object(const rgw_obj_key &k) {
     // ldout(ctx(), 10) << __func__ << ": TODO obj_key=" << k << dendl;
-    return std::make_unique<SimpleFileObject>(*this, k);
+    return std::make_unique<SimpleFileObject>(this, k);
   }
   virtual RGWCoroutinesManagerRegistry *get_cr_registry() override {
     return nullptr;

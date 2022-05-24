@@ -15,10 +15,11 @@
 #define RGW_STORE_SIMPLEFILE_NOTIFICATION_H
 
 #include "rgw_sal.h"
+#include "rgw_sal_store.h"
 
 namespace rgw::sal {
 
-class SimpleFileNotification : public Notification {
+class SimpleFileNotification : public StoreNotification {
 
 public:
 
@@ -26,7 +27,7 @@ public:
     Object *obj,
     Object *src_obj,
     rgw::notify::EventType type
-  ) : Notification(obj, src_obj, type) { }
+  ) : StoreNotification(obj, src_obj, type) { }
 
   ~SimpleFileNotification() = default;
 
