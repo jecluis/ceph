@@ -312,6 +312,7 @@ void SimpleFileObject::load_meta() {
 
   set_obj_size(meta.size);
   set_attrs(meta.attrs);
+  state.mtime = meta.mtime;
 }
 
 } // ns rgw::sal
