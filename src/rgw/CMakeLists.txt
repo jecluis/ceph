@@ -206,7 +206,6 @@ if(WITH_RADOSGW_SIMPLEFILE)
     store/simplefile/zone.cc
     store/simplefile/writer.cc
     store/simplefile/sfs_bucket.cc
-    store/simplefile/sfs_paths.cc
     store/simplefile/sfs_user.cc)
 endif()
 if(WITH_RADOSGW_MOTR)
