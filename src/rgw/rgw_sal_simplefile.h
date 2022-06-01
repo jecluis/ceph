@@ -105,10 +105,19 @@ class SimpleFileStore : public StoreStore {
     return "NA";
   }
   virtual bool is_meta_master() override { return true; }
+  /**
+   * Obtain an internal representation of an object by its key. This does not
+   * directly specify the bucket, so there's no direct mapping to an actual
+   * object (existing or not).
+   * 
+   * The SAL layer will often call this function during its operation, setting
+   * the bucket accordingly at some point.
+   */
   virtual std::unique_ptr<Object> get_object(const rgw_obj_key &k) {
     // ldout(ctx(), 10) << __func__ << ": TODO obj_key=" << k << dendl;
     return std::make_unique<SimpleFileObject>(this, k);
   }
+
   virtual RGWCoroutinesManagerRegistry *get_cr_registry() override {
     return nullptr;
   }
