@@ -200,6 +200,7 @@ if(WITH_RADOSGW_SIMPLEFILE)
   list(APPEND librgw_common_srcs
     rgw_sal_simplefile.cc
     store/simplefile/bucket.cc
+    store/simplefile/bucket_mgr.cc
     store/simplefile/multipart.cc
     store/simplefile/object.cc
     store/simplefile/user.cc
