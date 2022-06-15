@@ -80,7 +80,6 @@ class UnsupportedLuaManager : public StoreLuaManager {
 
 class SimpleFileStore : public StoreStore {
  private:
-  RGWUserInfo dummy_user;
   RGWSyncModuleInstanceRef sync_module;
   SimpleFileZone zone;
   const std::filesystem::path data_path;

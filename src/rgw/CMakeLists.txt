@@ -207,7 +207,9 @@ if(WITH_RADOSGW_SIMPLEFILE)
     store/simplefile/zone.cc
     store/simplefile/writer.cc
     store/simplefile/sfs_bucket.cc
-    store/simplefile/sfs_user.cc)
+    store/simplefile/sfs_user.cc
+    store/simplefile/sqlite/sqlite_users.cc
+    store/simplefile/sqlite/users_conversions.cc)
 endif()
 if(WITH_RADOSGW_MOTR)
   list(APPEND librgw_common_srcs rgw_sal_motr.cc)
