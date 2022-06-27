@@ -1,6 +1,18 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t; origami-fold-style: triple-braces -*-
 // vim: ts=8 sw=2 smarttab ft=cpp
-#include "rgw_sal_simplefile.h"
+/*
+ * Ceph - scalable distributed file system
+ * SFS SAL implementation
+ *
+ * Copyright (C) 2022 SUSE LLC
+ *
+ * This is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License version 2.1, as published by the Free Software
+ * Foundation. See file COPYING.
+ *
+ */
+#include "rgw_sal_sfs.h"
 
 #include <errno.h>
 #include <stdlib.h>
@@ -30,9 +42,9 @@
 #include "services/svc_zone.h"
 #include "services/svc_zone_utils.h"
 
-#include "store/simplefile/bucket_mgr.h"
-#include "store/simplefile/notification.h"
-#include "store/simplefile/writer.h"
+#include "store/sfs/bucket_mgr.h"
+#include "store/sfs/notification.h"
+#include "store/sfs/writer.h"
 
 #define dout_subsys ceph_subsys_rgw
 
@@ -40,45 +52,12 @@ using namespace std;
 
 namespace rgw::sal {
 
-// Store > User {{{
-
-std::unique_ptr<User> SimpleFileStore::get_user(const rgw_user &u) {
-  return std::make_unique<SimpleFileUser>(u, this);
-}
-int SimpleFileStore::get_user_by_access_key(const DoutPrefixProvider *dpp,
-                                            const std::string &key,
-                                            optional_yield y,
-                                            std::unique_ptr<User> *user) {
-  ldpp_dout(dpp, 10) << __func__ << ": TODO (returning dummy user)" << dendl;
-  user->reset(new SimpleFileUser(dummy_user, this));
-  return 0;
-}
-
-int SimpleFileStore::get_user_by_email(const DoutPrefixProvider *dpp,
-                                       const std::string &email,
-                                       optional_yield y,
-                                       std::unique_ptr<User> *user) {
-  ldpp_dout(dpp, 10) << __func__ << ": TODO" << dendl;
-  user->reset(new SimpleFileUser(dummy_user, this));
-  return 0;
-}
-
-int SimpleFileStore::get_user_by_swift(const DoutPrefixProvider *dpp,
-                                       const std::string &user_str,
-                                       optional_yield y,
-                                       std::unique_ptr<User> *user) {
-  ldpp_dout(dpp, 10) << __func__ << ": TODO" << dendl;
-  return -ENOTSUP;
-}
-
-// }}}
-
 // Lifecycle {{{
-std::unique_ptr<Lifecycle> SimpleFileStore::get_lifecycle(void) {
+std::unique_ptr<Lifecycle> SFStore::get_lifecycle(void) {
   ldout(ctx(), 10) << __func__ << ": TODO" << dendl;
   return nullptr;
 }
-RGWLC *SimpleFileStore::get_rgwlc(void) {
+RGWLC *SFStore::get_rgwlc(void) {
   ldout(ctx(), 10) << __func__ << ": TODO" << dendl;
   return nullptr;
 }
@@ -86,14 +65,14 @@ RGWLC *SimpleFileStore::get_rgwlc(void) {
 // }}}
 
 // Store > Completions {{{
-std::unique_ptr<Completions> SimpleFileStore::get_completions(void) {
+std::unique_ptr<Completions> SFStore::get_completions(void) {
   ldout(ctx(), 10) << __func__ << ": TODO" << dendl;
   return nullptr;
 }
 // }}}
 
 // Store > Notifications {{{
-std::unique_ptr<Notification> SimpleFileStore::get_notification(
+std::unique_ptr<Notification> SFStore::get_notification(
   rgw::sal::Object *obj,
   rgw::sal::Object *src_obj,
   struct req_state *s,
@@ -101,10 +80,10 @@ std::unique_ptr<Notification> SimpleFileStore::get_notification(
   const std::string *object_name
 ) {
   ldout(ctx(), 10) << __func__ << ": return stub notification" << dendl;
-  return std::make_unique<SimpleFileNotification>(obj, src_obj, event_type);
+  return std::make_unique<SFSNotification>(obj, src_obj, event_type);
 }
 
-std::unique_ptr<Notification> SimpleFileStore::get_notification(
+std::unique_ptr<Notification> SFStore::get_notification(
   const DoutPrefixProvider *dpp,
   rgw::sal::Object *obj,
   rgw::sal::Object *src_obj,
@@ -116,13 +95,13 @@ std::unique_ptr<Notification> SimpleFileStore::get_notification(
   optional_yield y
 ) {
   ldpp_dout(dpp, 10) << __func__ << ": return stub notification" << dendl;
-  return std::make_unique<SimpleFileNotification>(obj, src_obj, event_type);
+  return std::make_unique<SFSNotification>(obj, src_obj, event_type);
 }
 
 // }}}
 
 // Store > Writer {{{
-std::unique_ptr<Writer> SimpleFileStore::get_append_writer(
+std::unique_ptr<Writer> SFStore::get_append_writer(
     const DoutPrefixProvider *dpp, optional_yield y,
     std::unique_ptr<rgw::sal::Object> _head_obj, const rgw_user &owner,
     const rgw_placement_rule *ptail_placement_rule,
@@ -132,7 +111,7 @@ std::unique_ptr<Writer> SimpleFileStore::get_append_writer(
   return nullptr;
 }
 /** Get a Writer that atomically writes an entire object */
-std::unique_ptr<Writer> SimpleFileStore::get_atomic_writer(
+std::unique_ptr<Writer> SFStore::get_atomic_writer(
     const DoutPrefixProvider *dpp,
     optional_yield y,
     std::unique_ptr<rgw::sal::Object> _head_obj,
@@ -145,7 +124,7 @@ std::unique_ptr<Writer> SimpleFileStore::get_atomic_writer(
   std::string bucketname = _head_obj->get_bucket()->get_name();
   ceph_assert(buckets_map.count(bucketname) > 0);
   auto mgr = buckets_map[bucketname];
-  return std::make_unique<SimpleFileAtomicWriter>(
+  return std::make_unique<SFSAtomicWriter>(
       dpp, y, std::move(_head_obj), this, mgr,
       owner, ptail_placement_rule,
       olh_epoch, unique_tag
@@ -155,12 +134,12 @@ std::unique_ptr<Writer> SimpleFileStore::get_atomic_writer(
 // }}}
 
 // Store: Boring Methods {{{
-std::unique_ptr<RGWOIDCProvider> SimpleFileStore::get_oidc_provider() {
+std::unique_ptr<RGWOIDCProvider> SFStore::get_oidc_provider() {
   RGWOIDCProvider *p = nullptr;
   return std::unique_ptr<RGWOIDCProvider>(p);
 }
 
-int SimpleFileStore::forward_request_to_master(const DoutPrefixProvider *dpp,
+int SFStore::forward_request_to_master(const DoutPrefixProvider *dpp,
                                                User *user, obj_version *objv,
                                                bufferlist &in_data,
                                                JSONParser *jp, req_info &info,
@@ -169,7 +148,7 @@ int SimpleFileStore::forward_request_to_master(const DoutPrefixProvider *dpp,
   return -ENOTSUP;
 }
 
-int SimpleFileStore::forward_iam_request_to_master(
+int SFStore::forward_iam_request_to_master(
   const DoutPrefixProvider* dpp,
   const RGWAccessKey& key,
   obj_version* objv,
@@ -182,38 +161,38 @@ int SimpleFileStore::forward_iam_request_to_master(
   return -ENOTSUP;
 }
 
-std::string SimpleFileStore::zone_unique_id(uint64_t unique_num) {
+std::string SFStore::zone_unique_id(uint64_t unique_num) {
   ldout(ctx(), 10) << __func__ << ": TODO" << dendl;
   return "";
 }
-std::string SimpleFileStore::zone_unique_trans_id(const uint64_t unique_num) {
+std::string SFStore::zone_unique_trans_id(const uint64_t unique_num) {
   ldout(ctx(), 10) << __func__ << ": TODO" << dendl;
   return "";
 }
 
-int SimpleFileStore::get_zonegroup(
+int SFStore::get_zonegroup(
   const std::string & id, std::unique_ptr<ZoneGroup> * zonegroup
 ) {
   return -ENOTSUP;
 }
 
-int SimpleFileStore::list_all_zones(
+int SFStore::list_all_zones(
   const DoutPrefixProvider *dpp, std::list<std::string> & zone_ids
 ) {
   return -ENOTSUP;
 }
 
-int SimpleFileStore::cluster_stat(RGWClusterStat &stats) {
+int SFStore::cluster_stat(RGWClusterStat &stats) {
   ldout(ctx(), 10) << __func__ << ": TODO" << dendl;
   return -ENOTSUP;
 }
 
-void SimpleFileStore::wakeup_meta_sync_shards(std::set<int> &shard_ids) {
+void SFStore::wakeup_meta_sync_shards(std::set<int> &shard_ids) {
   ldout(ctx(), 10) << __func__ << ": TODO" << dendl;
   return;
 }
 
-void SimpleFileStore::wakeup_data_sync_shards(
+void SFStore::wakeup_data_sync_shards(
   const DoutPrefixProvider *dpp,
   const rgw_zone_id &source_zone,
   boost::container::flat_map<
@@ -225,26 +204,26 @@ void SimpleFileStore::wakeup_data_sync_shards(
   return;
 }
 
-int SimpleFileStore::register_to_service_map(const DoutPrefixProvider *dpp,
+int SFStore::register_to_service_map(const DoutPrefixProvider *dpp,
                                              const string &daemon_type,
                                              const map<string, string> &meta) {
   ldpp_dout(dpp, 10) << __func__ << ": TODO" << dendl;
   return 0;
 }
 
-void SimpleFileStore::get_ratelimit(RGWRateLimitInfo &bucket_ratelimit,
+void SFStore::get_ratelimit(RGWRateLimitInfo &bucket_ratelimit,
                                     RGWRateLimitInfo &user_ratelimit,
                                     RGWRateLimitInfo &anon_ratelimit) {
   ldout(ctx(), 10) << __func__ << ": TODO" << dendl;
   return;
 }
 
-void SimpleFileStore::get_quota(RGWQuota& quota) {
+void SFStore::get_quota(RGWQuota& quota) {
   ldout(ctx(), 10) << __func__ << ": TODO" << dendl;
   return;
 }
 
-int SimpleFileStore::get_sync_policy_handler(
+int SFStore::get_sync_policy_handler(
     const DoutPrefixProvider *dpp, std::optional<rgw_zone_id> zone,
     std::optional<rgw_bucket> bucket, RGWBucketSyncPolicyHandlerRef *phandler,
     optional_yield y) {
@@ -252,13 +231,13 @@ int SimpleFileStore::get_sync_policy_handler(
   return 0;
 }
 
-RGWDataSyncStatusManager *SimpleFileStore::get_data_sync_manager(
+RGWDataSyncStatusManager *SFStore::get_data_sync_manager(
     const rgw_zone_id &source_zone) {
   ldout(ctx(), 10) << __func__ << ": TODO" << dendl;
   return 0;
 }
 
-int SimpleFileStore::read_all_usage(
+int SFStore::read_all_usage(
     const DoutPrefixProvider *dpp, uint64_t start_epoch, uint64_t end_epoch,
     uint32_t max_entries, bool *is_truncated, RGWUsageIter &usage_iter,
     map<rgw_user_bucket, rgw_usage_log_entry> &usage) {
@@ -266,63 +245,63 @@ int SimpleFileStore::read_all_usage(
   return 0;
 }
 
-int SimpleFileStore::trim_all_usage(const DoutPrefixProvider *dpp,
+int SFStore::trim_all_usage(const DoutPrefixProvider *dpp,
                                     uint64_t start_epoch, uint64_t end_epoch) {
   ldpp_dout(dpp, 10) << __func__ << ": TODO" << dendl;
   return 0;
 }
 
-int SimpleFileStore::get_config_key_val(string name, bufferlist *bl) {
+int SFStore::get_config_key_val(string name, bufferlist *bl) {
   ldout(ctx(), 10) << __func__ << ": TODO" << dendl;
   return 0;
 }
 
-int SimpleFileStore::meta_list_keys_init(const DoutPrefixProvider *dpp,
+int SFStore::meta_list_keys_init(const DoutPrefixProvider *dpp,
                                          const string &section,
                                          const string &marker, void **phandle) {
   ldpp_dout(dpp, 10) << __func__ << ": TODO" << dendl;
   return 0;
 }
 
-int SimpleFileStore::meta_list_keys_next(const DoutPrefixProvider *dpp,
+int SFStore::meta_list_keys_next(const DoutPrefixProvider *dpp,
                                          void *handle, int max,
                                          list<string> &keys, bool *truncated) {
   ldpp_dout(dpp, 10) << __func__ << ": TODO" << dendl;
   return 0;
 }
 
-void SimpleFileStore::meta_list_keys_complete(void *handle) {
+void SFStore::meta_list_keys_complete(void *handle) {
   ldout(ctx(), 10) << __func__ << ": TODO" << dendl;
   return;
 }
 
-std::string SimpleFileStore::meta_get_marker(void *handle) {
+std::string SFStore::meta_get_marker(void *handle) {
   ldout(ctx(), 10) << __func__ << ": TODO" << dendl;
   return "";
 }
 
-int SimpleFileStore::meta_remove(const DoutPrefixProvider *dpp,
+int SFStore::meta_remove(const DoutPrefixProvider *dpp,
                                  string &metadata_key, optional_yield y) {
   ldpp_dout(dpp, 10) << __func__ << ": TODO" << dendl;
   return 0;
 }
 
-const RGWSyncModuleInstanceRef &SimpleFileStore::get_sync_module() {
+const RGWSyncModuleInstanceRef &SFStore::get_sync_module() {
   ldout(ctx(), 10) << __func__ << ": TODO" << dendl;
   return sync_module;
 }
 
-std::string SimpleFileStore::get_host_id() {
+std::string SFStore::get_host_id() {
   ldout(ctx(), 10) << __func__ << ": TODO" << dendl;
   return "";
 }
 
-std::unique_ptr<LuaManager> SimpleFileStore::get_lua_manager() {
+std::unique_ptr<LuaManager> SFStore::get_lua_manager() {
   ldout(ctx(), 10) << __func__ << ": TODO" << dendl;
   return std::make_unique<UnsupportedLuaManager>();
 }
 
-std::unique_ptr<RGWRole> SimpleFileStore::get_role(
+std::unique_ptr<RGWRole> SFStore::get_role(
   std::string name,
   std::string tenant,
   std::string path,
@@ -335,18 +314,18 @@ std::unique_ptr<RGWRole> SimpleFileStore::get_role(
   return std::unique_ptr<RGWRole>(p);
 }
 
-std::unique_ptr<RGWRole> SimpleFileStore::get_role(std::string id) {
+std::unique_ptr<RGWRole> SFStore::get_role(std::string id) {
   ldout(ctx(), 10) << __func__ << ": TODO" << dendl;
   RGWRole *p = nullptr;
   return std::unique_ptr<RGWRole>(p);
 }
 
-std::unique_ptr<RGWRole> SimpleFileStore::get_role(const RGWRoleInfo& info) {
+std::unique_ptr<RGWRole> SFStore::get_role(const RGWRoleInfo& info) {
   ldout(ctx(), 10) << __func__ << ": not implemented" << dendl;
   return std::unique_ptr<RGWRole>(nullptr);
 }
 
-int SimpleFileStore::get_roles(
+int SFStore::get_roles(
   const DoutPrefixProvider *dpp, optional_yield y,
   const std::string &path_prefix,
   const std::string &tenant,
@@ -358,19 +337,19 @@ int SimpleFileStore::get_roles(
 
 // }}}
 
-void SimpleFileStore::register_admin_apis(RGWRESTMgr * mgr) {
+void SFStore::register_admin_apis(RGWRESTMgr * mgr) {
 
 };
 
 // Store > Logging {{{
-int SimpleFileStore::log_usage(
+int SFStore::log_usage(
     const DoutPrefixProvider *dpp,
     map<rgw_user_bucket, RGWUsageBatch> &usage_info) {
   ldpp_dout(dpp, 10) << __func__ << ": TODO" << dendl;
   return 0;
 }
 
-int SimpleFileStore::log_op(const DoutPrefixProvider *dpp, string &oid,
+int SFStore::log_op(const DoutPrefixProvider *dpp, string &oid,
                             bufferlist &bl) {
   ldpp_dout(dpp, 10) << __func__ << ": TODO" << dendl;
   return 0;
@@ -380,7 +359,7 @@ int SimpleFileStore::log_op(const DoutPrefixProvider *dpp, string &oid,
 
 // Initialization {{{
 
-int SimpleFileStore::initialize(
+int SFStore::initialize(
   CephContext* cct,
   const DoutPrefixProvider* dpp
 ) {
@@ -388,12 +367,12 @@ int SimpleFileStore::initialize(
   return 0;
 }
 
-void SimpleFileStore::finalize(void) {
+void SFStore::finalize(void) {
   ldout(ctx(), 10) << __func__ << ": TODO" << dendl;
   return;
 }
 
-void SimpleFileStore::maybe_init_store() {
+void SFStore::maybe_init_store() {
 
   auto meta = meta_path();
   if (std::filesystem::exists(meta)) {
@@ -414,7 +393,7 @@ void SimpleFileStore::maybe_init_store() {
 
 }
 
-void SimpleFileStore::init_buckets() {
+void SFStore::init_buckets() {
   ldout(cctx, 10) << "init buckets" << dendl;
   auto p = buckets_path();
   for (auto const &entry : std::filesystem::directory_iterator{p}) {
@@ -425,7 +404,7 @@ void SimpleFileStore::init_buckets() {
   }
 }
 
-SimpleFileStore::SimpleFileStore(
+SFStore::SFStore(
   CephContext *c,
   const std::filesystem::path &data_path
 ) : sync_module(),
@@ -436,17 +415,16 @@ SimpleFileStore::SimpleFileStore(
   maybe_init_store();
   init_buckets();
 
-  ldout(ctx(), 0) << "Simplefile store serving data from " << data_path
-                  << dendl;
+  ldout(ctx(), 0) << "sfs serving data from " << data_path << dendl;
 }
 
-SimpleFileStore::~SimpleFileStore() { }
+SFStore::~SFStore() { }
 
 }  // namespace rgw::sal
 
 extern "C" {
-void *newSimpleFileStore(CephContext *cct) {
-  rgw::sal::SimpleFileStore *store = new rgw::sal::SimpleFileStore(cct, "/tmp");
+void *newSFStore(CephContext *cct) {
+  rgw::sal::SFStore *store = new rgw::sal::SFStore(cct, "/tmp");
   return store;
 }
 }

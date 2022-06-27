@@ -3,10 +3,9 @@
 
 /*
  * Ceph - scalable distributed file system
+ * SFS SAL implementation
  *
- * Simple filesystem SAL implementation
- *
- * Copyright (C) 2021
+ * Copyright (C) 2022 SUSE LLC
  *
  * This is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -14,8 +13,8 @@
  * Foundation. See file COPYING.
  *
  */
-#ifndef RGW_STORE_SIMPLEFILE_H
-#define RGW_STORE_SIMPLEFILE_H
+#ifndef RGW_STORE_SFS_H
+#define RGW_STORE_SFS_H
 
 #include <filesystem>
 
@@ -28,12 +27,12 @@
 #include "rgw_sal.h"
 #include "rgw_sal_dbstore.h"
 
-#include "store/simplefile/user.h"
-#include "store/simplefile/bucket.h"
-#include "store/simplefile/bucket_mgr.h"
-#include "store/simplefile/bucket_mgr.h"
-#include "store/simplefile/object.h"
-#include "store/simplefile/zone.h"
+#include "store/sfs/user.h"
+#include "store/sfs/bucket.h"
+#include "store/sfs/bucket_mgr.h"
+#include "store/sfs/bucket_mgr.h"
+#include "store/sfs/object.h"
+#include "store/sfs/zone.h"
 
 
 #define lsfs_dout(_dpp, _lvl) \
@@ -43,7 +42,7 @@
 
 namespace rgw::sal {
 
-class SimpleFileStore;
+class SFStore;
 
 class UnsupportedLuaManager : public StoreLuaManager {
  public:
@@ -78,10 +77,10 @@ class UnsupportedLuaManager : public StoreLuaManager {
   }
 };
 
-class SimpleFileStore : public StoreStore {
+class SFStore : public StoreStore {
  private:
   RGWSyncModuleInstanceRef sync_module;
-  SimpleFileZone zone;
+  SFSZone zone;
   const std::filesystem::path data_path;
   std::string luarocks_path = "";
   CephContext *const cctx;
@@ -89,10 +88,10 @@ class SimpleFileStore : public StoreStore {
   std::map<std::string, BucketMgrRef> buckets_map;
 
  public:
-  SimpleFileStore(CephContext *c, const std::filesystem::path &data_path);
-  SimpleFileStore(const SimpleFileStore&) = delete;
-  SimpleFileStore& operator=(const SimpleFileStore&) = delete;
-  ~SimpleFileStore();
+  SFStore(CephContext *c, const std::filesystem::path &data_path);
+  SFStore(const SFStore&) = delete;
+  SFStore& operator=(const SFStore&) = delete;
+  ~SFStore();
 
   virtual int initialize(
     CephContext* cct,
@@ -102,7 +101,7 @@ class SimpleFileStore : public StoreStore {
   void maybe_init_store();
   void init_buckets();
 
-  virtual const std::string get_name() const override { return "simplefile"; }
+  virtual const std::string get_name() const override { return "sfs"; }
 
   virtual std::string get_cluster_id(const DoutPrefixProvider *dpp,
                                      optional_yield y) override {
@@ -119,7 +118,7 @@ class SimpleFileStore : public StoreStore {
    */
   virtual std::unique_ptr<Object> get_object(const rgw_obj_key &k) {
     // ldout(ctx(), 10) << __func__ << ": TODO obj_key=" << k << dendl;
-    return std::make_unique<SimpleFileObject>(this, k);
+    return std::make_unique<SFSObject>(this, k);
   }
 
   virtual RGWCoroutinesManagerRegistry *get_cr_registry() override {
@@ -422,10 +421,10 @@ class SimpleFileStore : public StoreStore {
     return hash.to_str();
   }
 
-  std::string get_cls_name() const { return "simplefile"; }
+  std::string get_cls_name() const { return "sfstore"; }
 };
 
 
 }  // namespace rgw::sal
 
-#endif // RGW_STORE_SIMPLEFILE_H
+#endif // RGW_STORE_SFS_H

@@ -196,20 +196,20 @@ if(WITH_RADOSGW_DBSTORE)
   add_subdirectory(store/dbstore)
   list(APPEND librgw_common_srcs rgw_sal_dbstore.cc)
 endif()
-if(WITH_RADOSGW_SIMPLEFILE)
+if(WITH_RADOSGW_SFS)
   list(APPEND librgw_common_srcs
-    rgw_sal_simplefile.cc
-    store/simplefile/bucket.cc
-    store/simplefile/bucket_mgr.cc
-    store/simplefile/multipart.cc
-    store/simplefile/object.cc
-    store/simplefile/user.cc
-    store/simplefile/zone.cc
-    store/simplefile/writer.cc
-    store/simplefile/sfs_bucket.cc
-    store/simplefile/sfs_user.cc
-    store/simplefile/sqlite/sqlite_users.cc
-    store/simplefile/sqlite/users_conversions.cc)
+    rgw_sal_sfs.cc
+    store/sfs/bucket.cc
+    store/sfs/bucket_mgr.cc
+    store/sfs/multipart.cc
+    store/sfs/object.cc
+    store/sfs/user.cc
+    store/sfs/zone.cc
+    store/sfs/writer.cc
+    store/sfs/sfs_bucket.cc
+    store/sfs/sfs_user.cc
+    store/sfs/sqlite/sqlite_users.cc
+    store/sfs/sqlite/users_conversions.cc)
 endif()
 if(WITH_RADOSGW_MOTR)
   list(APPEND librgw_common_srcs rgw_sal_motr.cc)
@@ -260,7 +260,7 @@ target_link_libraries(rgw_common
     spawn)
 target_include_directories(rgw_common
   PUBLIC "services"
-  PUBLIC "store/simplefile"
+  PUBLIC "store/sfs"
   PUBLIC "${CMAKE_SOURCE_DIR}/src/rgw"
   PUBLIC "${LUA_INCLUDE_DIR}")
 if(WITH_RADOSGW_KAFKA_ENDPOINT)
