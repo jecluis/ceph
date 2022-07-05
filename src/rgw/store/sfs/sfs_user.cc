@@ -30,8 +30,7 @@ int SFStore::get_user_by_access_key(const DoutPrefixProvider *dpp,
   int err = 0;
   rgw::sal::sfs::sqlite::SQLiteUsers sqlite_users(dpp->get_cct());
   auto db_user = sqlite_users.getUserByAccessKey(key);
-  if (db_user) {  
-    db_user->uinfo.user_id.id = "";   // TODO Remove this when ACL is implemented
+  if (db_user) {
     user->reset(new SFSUser(db_user->uinfo, this));
   } else {
     ldpp_dout(dpp, 10) << __func__ << ": User not found" << dendl;
@@ -44,16 +43,15 @@ int SFStore::get_user_by_email(const DoutPrefixProvider *dpp,
                                        const std::string &email,
                                        optional_yield y,
                                        std::unique_ptr<User> *user) {
-  int err = 0;                    
+  int err = 0;
   rgw::sal::sfs::sqlite::SQLiteUsers sqlite_users(dpp->get_cct());
   auto db_user = sqlite_users.getUserByEmail(email);
   if (db_user) {
-    db_user->uinfo.user_id.id = "";   // TODO Remove this when ACL is implemented
     user->reset(new SFSUser(db_user->uinfo, this));
   } else {
     ldpp_dout(dpp, 10) << __func__ << ": User not found" << dendl;
-    err = -ENOENT;                                   
-  }                              
+    err = -ENOENT;
+  }
   return err;
 }
 
