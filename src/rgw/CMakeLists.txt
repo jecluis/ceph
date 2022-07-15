@@ -190,7 +190,14 @@ if(WITH_RADOSGW_SFS)
     store/sfs/sfs_bucket.cc
     store/sfs/sfs_user.cc
     store/sfs/sqlite/sqlite_users.cc
-    store/sfs/sqlite/users_conversions.cc)
+    store/sfs/sqlite/sqlite_buckets.cc
+    store/sfs/sqlite/sqlite_objects.cc
+    store/sfs/sqlite/sqlite_versioned_objects.cc
+    store/sfs/sqlite/sqlite_schema.cc
+    store/sfs/sqlite/users/users_conversions.cc
+    store/sfs/sqlite/buckets/bucket_conversions.cc
+    store/sfs/sqlite/objects/object_conversions.cc
+    store/sfs/sqlite/versioned_object/versioned_object_conversions.cc)
 endif()
 if(WITH_RADOSGW_MOTR)
   list(APPEND librgw_common_srcs rgw_sal_motr.cc)
