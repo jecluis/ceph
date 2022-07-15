@@ -11,15 +11,25 @@
  * License version 2.1, as published by the Free Software
  * Foundation. See file COPYING.
  */
-#pragma once
+#include "sqlite_schema.h"
 
-#include "users_definitions.h"
-#include "sqlite_orm.h"
+#include <filesystem>
 
 namespace rgw::sal::sfs::sqlite  {
 
-// Functions that convert DB type to RGW type (and vice-versa)
-DBOPUserInfo getRGWUser(const DBUser & user);
-DBUser getDBUser(const DBOPUserInfo & user );
+SQLiteSchema::SQLiteSchema(CephContext *cct)
+    : ceph_context_(cct) {
+    sync();
+}
+
+std::string SQLiteSchema::getDBPath() const {
+    auto rgw_sfs_path = ceph_context_->_conf.get_val<std::string>("rgw_sfs_data_path");
+    auto db_path = std::filesystem::path(rgw_sfs_path) / std::string(SCHEMA_DB_NAME);
+    return db_path.string();
+}
+
+void SQLiteSchema::sync() const {
+    get_storage().sync_schema();
+}
 
 }  // namespace rgw::sal::sfs::sqlite
