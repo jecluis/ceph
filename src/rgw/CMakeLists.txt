@@ -200,7 +200,6 @@ if(WITH_RADOSGW_SFS)
   list(APPEND librgw_common_srcs
     rgw_sal_sfs.cc
     store/sfs/bucket.cc
-    store/sfs/bucket_mgr.cc
     store/sfs/multipart.cc
     store/sfs/object.cc
     store/sfs/user.cc
