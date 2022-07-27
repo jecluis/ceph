@@ -13,8 +13,8 @@
  */
 #pragma once
 
-#include "rgw_common.h"
-#include "object_state.h"
+#include "rgw/rgw_common.h"
+#include "rgw/store/sfs/object_state.h"
 
 #include <string>
 
