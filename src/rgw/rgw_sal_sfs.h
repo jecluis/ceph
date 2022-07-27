@@ -32,6 +32,7 @@
 #include "store/sfs/object.h"
 #include "store/sfs/zone.h"
 
+#include "store/sfs/sqlite/dbconn.h"
 #include "store/sfs/sqlite/sqlite_buckets.h"
 #include "store/sfs/sqlite/sqlite_users.h"
 
@@ -75,9 +76,10 @@ class SFStore : public Store {
   CephContext *const cctx;
   ceph::mutex buckets_map_lock = ceph::make_mutex("buckets_map_lock");
   std::map<std::string, sfs::BucketRef> buckets;
-  sfs::MetaBucketsRef meta_buckets;
 
  public:
+  sfs::sqlite::DBConnRef conn;
+
   SFStore(CephContext *c, const std::filesystem::path &data_path);
   SFStore(const SFStore&) = delete;
   SFStore& operator=(const SFStore&) = delete;
@@ -420,7 +422,9 @@ class SFStore : public Store {
     info.binfo.placement_rule.name = "default";
     info.binfo.placement_rule.storage_class = "STANDARD";
     
+    auto meta_buckets = sfs::get_meta_buckets(conn);
     meta_buckets->store_bucket(info);
+
     sfs::BucketRef b = std::make_shared<sfs::Bucket>(
       ctx(), this, bucket, owner
     );
@@ -434,9 +438,10 @@ class SFStore : public Store {
   }
 
   void _refresh_buckets() {
+    auto meta_buckets = sfs::get_meta_buckets(conn);
     auto existing = meta_buckets->get_buckets();
     buckets.clear();
-    sfs::sqlite::SQLiteUsers users(cctx);
+    sfs::sqlite::SQLiteUsers users(conn);
     for (auto &b : existing) {
       auto user = users.get_user(b.binfo.owner.id);
       sfs::BucketRef ref = std::make_shared<sfs::Bucket>(

@@ -184,6 +184,7 @@ if(WITH_RADOSGW_SFS)
     store/sfs/multipart.cc
     store/sfs/object.cc
     store/sfs/user.cc
+    store/sfs/types.cc
     store/sfs/zone.cc
     store/sfs/writer.cc
     store/sfs/sfs_bucket.cc
@@ -192,7 +193,6 @@ if(WITH_RADOSGW_SFS)
     store/sfs/sqlite/sqlite_buckets.cc
     store/sfs/sqlite/sqlite_objects.cc
     store/sfs/sqlite/sqlite_versioned_objects.cc
-    store/sfs/sqlite/sqlite_schema.cc
     store/sfs/sqlite/users/users_conversions.cc
     store/sfs/sqlite/buckets/bucket_conversions.cc
     store/sfs/sqlite/objects/object_conversions.cc
