@@ -32,6 +32,9 @@
 #include "store/sfs/object.h"
 #include "store/sfs/zone.h"
 
+#include "store/sfs/sqlite/sqlite_buckets.h"
+#include "store/sfs/sqlite/sqlite_users.h"
+
 
 #define lsfs_dout(_dpp, _lvl) \
   ldpp_dout(_dpp, _lvl) << "> " << this->get_cls_name() \
@@ -72,6 +75,7 @@ class SFStore : public Store {
   CephContext *const cctx;
   ceph::mutex buckets_map_lock = ceph::make_mutex("buckets_map_lock");
   std::map<std::string, sfs::BucketRef> buckets;
+  sfs::MetaBucketsRef meta_buckets;
 
  public:
   SFStore(CephContext *c, const std::filesystem::path &data_path);
@@ -409,12 +413,43 @@ class SFStore : public Store {
       return nullptr;
     }
 
-    sfs::BucketRef b = std::make_shared<sfs::Bucket>(this, bucket, owner);
+    sfs::sqlite::DBOPBucketInfo info;
+    info.binfo.bucket = bucket;
+    info.binfo.owner = owner.user_id;
+    info.binfo.creation_time = ceph::real_clock::now();
+    info.binfo.placement_rule.name = "default";
+    info.binfo.placement_rule.storage_class = "STANDARD";
+    
+    meta_buckets->store_bucket(info);
+    sfs::BucketRef b = std::make_shared<sfs::Bucket>(
+      ctx(), this, bucket, owner
+    );
     buckets[bucket.name] = b;
     return b;
   }
 
+  void _refresh_buckets_safe() {
+    std::lock_guard l(buckets_map_lock);
+    _refresh_buckets();
+  }
+
+  void _refresh_buckets() {
+    auto existing = meta_buckets->get_buckets();
+    buckets.clear();
+    sfs::sqlite::SQLiteUsers users(cctx);
+    for (auto &b : existing) {
+      auto user = users.get_user(b.binfo.owner.id);
+      sfs::BucketRef ref = std::make_shared<sfs::Bucket>(
+        ctx(), this, b.binfo.bucket, user->uinfo
+      );
+      buckets[b.binfo.bucket.name] = ref;
+    }
+  }
+
   std::list<sfs::BucketRef> bucket_list() {
+
+    _refresh_buckets_safe();
+
     std::list<sfs::BucketRef> lst;
     std::lock_guard l(buckets_map_lock);
     for (const auto &[name, bucketref]: buckets) {
