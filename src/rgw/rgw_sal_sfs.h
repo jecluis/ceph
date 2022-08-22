@@ -365,7 +365,7 @@ class SFStore : public StoreStore {
     meta_buckets->store_bucket(info);
 
     sfs::BucketRef b = std::make_shared<sfs::Bucket>(
-      ctx(), this, bucket, owner
+      ctx(), this, info.binfo, owner
     );
     buckets[bucket.name] = b;
     return b;
@@ -384,7 +384,7 @@ class SFStore : public StoreStore {
     for (auto &b : existing) {
       auto user = users.get_user(b.binfo.owner.id);
       sfs::BucketRef ref = std::make_shared<sfs::Bucket>(
-        ctx(), this, b.binfo.bucket, user->uinfo
+        ctx(), this, b.binfo, user->uinfo
       );
       buckets[b.binfo.bucket.name] = ref;
     }
