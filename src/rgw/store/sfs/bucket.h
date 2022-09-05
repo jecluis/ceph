@@ -21,7 +21,6 @@
 #include "common/Formatter.h"
 #include "common/ceph_json.h"
 #include "rgw_sal.h"
-#include "store/sfs/multipart.h"
 #include "store/sfs/object.h"
 #include "rgw/store/sfs/types.h"
 
@@ -30,6 +29,7 @@ namespace rgw::sal {
 
 class SFStore;
 class SFSObject;
+class SFSMultipartUpload;
 
 class SFSBucket : public StoreBucket {
  private:

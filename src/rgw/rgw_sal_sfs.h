@@ -25,8 +25,8 @@
 #include "rgw_rados.h"
 #include "rgw_role.h"
 #include "rgw_sal.h"
-#include "rgw_sal_dbstore.h"
 
+#include "store/sfs/types.h"
 #include "store/sfs/user.h"
 #include "store/sfs/bucket.h"
 #include "store/sfs/object.h"
