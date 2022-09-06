@@ -197,25 +197,8 @@ if(WITH_RADOSGW_DBSTORE)
   list(APPEND librgw_common_srcs rgw_sal_dbstore.cc)
 endif()
 if(WITH_RADOSGW_SFS)
-  list(APPEND librgw_common_srcs
-    rgw_sal_sfs.cc
-    store/sfs/bucket.cc
-    store/sfs/multipart.cc
-    store/sfs/object.cc
-    store/sfs/user.cc
-    store/sfs/types.cc
-    store/sfs/zone.cc
-    store/sfs/writer.cc
-    store/sfs/sfs_bucket.cc
-    store/sfs/sfs_user.cc
-    store/sfs/sqlite/sqlite_users.cc
-    store/sfs/sqlite/sqlite_buckets.cc
-    store/sfs/sqlite/sqlite_objects.cc
-    store/sfs/sqlite/sqlite_versioned_objects.cc
-    store/sfs/sqlite/users/users_conversions.cc
-    store/sfs/sqlite/buckets/bucket_conversions.cc
-    store/sfs/sqlite/objects/object_conversions.cc
-    store/sfs/sqlite/versioned_object/versioned_object_conversions.cc)
+  add_subdirectory(store/sfs)
+  list(APPEND librgw_common_srcs rgw_sal_sfs.cc)
 endif()
 if(WITH_RADOSGW_MOTR)
   list(APPEND librgw_common_srcs rgw_sal_motr.cc)
@@ -305,6 +288,10 @@ endif()
 
 if(WITH_RADOSGW_DBSTORE)
   target_link_libraries(rgw_common PRIVATE global dbstore)
+endif()
+
+if(WITH_RADOSGW_SFS)
+  target_link_libraries(rgw_common PRIVATE global sfs)
 endif()
 
 if(WITH_RADOSGW_MOTR)
