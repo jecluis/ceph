@@ -420,6 +420,11 @@ class SFStore : public StoreStore {
     }
   }
 
+  void _delete_bucket(const std::string & name) {
+    std::lock_guard l(buckets_map_lock);
+    buckets.erase(name);
+  }
+
   std::list<sfs::BucketRef> bucket_list() {
 
     _refresh_buckets_safe();
