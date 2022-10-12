@@ -43,10 +43,19 @@ std::optional<DBOPUserInfo> SQLiteUsers::get_user_by_email(const std::string & e
   return ret_value;
 }
 
+#define dout_subsys ceph_subsys_rgw
+
 std::optional<DBOPUserInfo> SQLiteUsers::get_user_by_access_key(const std::string & key) const {
   auto user_id = get_user_id_by_access_key(key);
+  ldout(g_ceph_context, 0) << __func__ << " key: " << key << ", user_id: " << user_id << dendl;
+  auto foo = get_user("testid");
+  ceph_assert(foo.has_value());
+  for (auto &k : foo->uinfo.access_keys) {
+    ldout(g_ceph_context, 0) << __func__ << " testid key: " << k.second.key << dendl;
+  }
   std::optional<DBOPUserInfo> ret_value;
   if (user_id.has_value()) {
+    std::shared_lock l(conn->rwlock);
     auto storage = conn->get_storage();
     auto user = storage.get_pointer<DBUser>(user_id);
     if (user) {
@@ -90,9 +99,10 @@ std::vector<DBOPUserInfo> SQLiteUsers::get_users_by(Args... args) const {
 }
 
 void SQLiteUsers::store_access_keys(const DBOPUserInfo & user) const {
+  std::unique_lock l(conn->rwlock);
   auto storage = conn->get_storage();
   // remove existing keys for the user (in case any of them had changed)
-  remove_access_keys(user.uinfo.user_id.id);
+  _remove_access_keys(storage, user.uinfo.user_id.id);
   for (auto const& key: user.uinfo.access_keys) {
     DBAccessKey db_key;
     db_key.access_key = key.first;
@@ -102,12 +112,21 @@ void SQLiteUsers::store_access_keys(const DBOPUserInfo & user) const {
 }
 
 void SQLiteUsers::remove_access_keys(const std::string & userid) const {
+  std::unique_lock l(conn->rwlock);
   auto storage = conn->get_storage();
+  _remove_access_keys(storage, userid);
+}
+
+void SQLiteUsers::_remove_access_keys(
+  rgw::sal::sfs::sqlite::Storage storage,
+  const std::string &userid
+) const {
   storage.remove_all<DBAccessKey>(where(c(&DBAccessKey::user_id) = userid));
 }
 
 std::optional<std::string> SQLiteUsers::get_user_id_by_access_key(
                                               const std::string & key) const {
+  std::shared_lock l(conn->rwlock);
   auto storage = conn->get_storage();
   auto keys = storage.get_all<DBAccessKey>(where(c(&DBAccessKey::access_key) = key));
   std::optional<std::string> ret_value;

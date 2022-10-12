@@ -41,6 +41,10 @@ class SQLiteUsers {
 
   void store_access_keys(const DBOPUserInfo & user) const;
   void remove_access_keys(const std::string & userid) const;
+  void _remove_access_keys(
+    rgw::sal::sfs::sqlite::Storage storage,
+    const std::string & userid
+  ) const;
   std::optional<std::string> get_user_id_by_access_key(const std::string & key) const;
 };
 

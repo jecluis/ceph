@@ -34,6 +34,7 @@ int SFStore::get_user_by_access_key(const DoutPrefixProvider *dpp,
     user->reset(new SFSUser(db_user->uinfo, this));
   } else {
     ldpp_dout(dpp, 10) << __func__ << ": User not found" << dendl;
+    ldpp_dout(dpp, 10) << __func__ << "  key: " << key << dendl;
     err = -ENOENT;
   }
   return err;

@@ -185,6 +185,11 @@ rgw::sal::Store* StoreManager::init_storage_provider(const DoutPrefixProvider* d
        */
       ldpp_dout(dpp, 0) << "Found default user \"" << id
                         << "\" in database." << dendl;
+      ldpp_dout(dpp, 0) << "  keys: " << dendl;
+      auto keys = user->get_info().access_keys;
+      for (const auto &k : keys) {
+        ldpp_dout(dpp, 0) << "    - " << k.first << ": " << k.second.key << dendl;
+      }
     } else {
       user->get_info().display_name = display_name;
       user->get_info().user_email = email;
