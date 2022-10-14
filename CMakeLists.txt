@@ -28,6 +28,8 @@ if(NOT CMAKE_BUILD_TYPE AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
       STRING "Default BUILD_TYPE is Debug, other options are: RelWithDebInfo, Release, and MinSizeRel." FORCE)
 endif()
 
+add_compile_definitions(FMT_DEPRECATED_OSTREAM=1)
+
 if(CMAKE_SYSTEM_NAME MATCHES "Linux")
   set(LINUX ON)
   FIND_PACKAGE(Threads)
