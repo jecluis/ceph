@@ -248,6 +248,7 @@ rgw::sal::Store* StoreManager::init_storage_provider(const DoutPrefixProvider* d
                           << " user in sfs error r=" << r << dendl;
       }
     }
+    store->initialize(cct, dpp);
     return store;
   }
 #endif // WITH_RADOSGW_SFS
