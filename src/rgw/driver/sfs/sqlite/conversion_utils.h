@@ -123,4 +123,11 @@ void assign_db_value(
   dest = blob_vector;
 }
 
+template <typename SOURCE>
+void assign_db_value(const SOURCE& source, std::vector<char>& dest) {
+  std::vector<char> blob_vector;
+  encode_blob(source, blob_vector);
+  dest = blob_vector;
+}
+
 }  // namespace rgw::sal::sfs::sqlite

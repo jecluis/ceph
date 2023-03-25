@@ -34,8 +34,9 @@ class UUIDPath {
     second = uuidstr.substr(2, 2);
     fname = uuidstr.substr(4);
   }
+  virtual ~UUIDPath() = default;
 
-  std::filesystem::path to_path() const {
+  virtual std::filesystem::path to_path() const {
     ceph_assert(!uuid.uuid.is_nil());
     return std::filesystem::path(first) / std::filesystem::path(second) /
            std::filesystem::path(fname);

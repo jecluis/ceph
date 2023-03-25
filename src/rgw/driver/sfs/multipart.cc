@@ -13,301 +13,599 @@
  */
 #include "multipart.h"
 
+#include <errno.h>
+#include <stdio.h>
+#include <unistd.h>
+
 #include <fstream>
 
+#include "rgw/driver/sfs/fmt.h"
+#include "rgw/driver/sfs/multipart_types.h"
 #include "rgw_sal_sfs.h"
+#include "sqlite/buckets/multipart_conversions.h"
 #include "writer.h"
 
 #define dout_subsys ceph_subsys_rgw
 
 using namespace std;
 
-namespace rgw::sal {
+namespace rgw::sal::sfs {
 
-std::unique_ptr<rgw::sal::Object> SFSMultipartUpload::get_meta_obj() {
-  auto mmo = std::make_unique<SFSMultipartMetaObject>(
-      store, rgw_obj_key(get_meta(), string(), RGW_OBJ_NS_MULTIPART), bucket,
-      bucketref
-  );
+SFSMultipartUploadV2::SFSMultipartUploadV2(
+    rgw::sal::SFStore* _store, SFSBucket* _bucket, sfs::BucketRef _bucketref,
+    const std::string& _upload_id, const std::string& _oid, ACLOwner _owner,
+    ceph::real_time _mtime
+)
+    : StoreMultipartUpload(_bucket),
+      store(_store),
+      bucketref(_bucketref),
+      upload_id(_upload_id),
+      oid(_oid),
+      owner(_owner),
+      mtime(_mtime),
+      meta_str("_meta" + _oid + "." + _upload_id) {
+  // load required data from db, if available.
+  sfs::sqlite::SQLiteMultipart mpdb(store->db_conn);
+  auto mp = mpdb.get_multipart(upload_id);
+  if (mp.has_value()) {
+    placement = mp->placement;
+  }
+}
+
+std::unique_ptr<rgw::sal::Object> SFSMultipartUploadV2::get_meta_obj() {
+  rgw_obj_key key(meta_str, string(), RGW_OBJ_NS_MULTIPART);
+  auto mmo =
+      std::make_unique<SFSMultipartMetaObject>(store, key, bucket, bucketref);
+
+  sfs::sqlite::SQLiteMultipart mpdb(store->db_conn);
+  auto mp = mpdb.get_multipart(upload_id);
+  ceph_assert(mp.has_value());
   mmo->set_attrs(mp->attrs);
-  mmo->set_object_ref(mp->objref);
-  mp->objref->update_attrs(mp->attrs);
+  // TODO(jecluis): this needs to be fixed once we get rid of the objref
+  mmo->set_object_ref(
+      std::shared_ptr<sfs::Object>(sfs::Object::create_from_obj_key(key))
+  );
   return mmo;
 }
 
-int SFSMultipartUpload::init(
+int SFSMultipartUploadV2::init(
     const DoutPrefixProvider* dpp, optional_yield y, ACLOwner& owner,
     rgw_placement_rule& dest_placement, rgw::sal::Attrs& attrs
 ) {
-  lsfs_dout(dpp, 10) << "owner: " << owner.get_display_name()
+  lsfs_dout(dpp, 10) << "upload_id: " << upload_id << ", oid: " << get_key()
+                     << ", meta: " << meta_str
+                     << ", owner: " << owner.get_display_name()
                      << ", attrs: " << attrs << dendl;
-  lsfs_dout(dpp, 10) << "objid: " << get_key()
-                     << ", upload_id: " << get_upload_id()
-                     << ", meta: " << get_meta() << dendl;
 
-  mp->init(dest_placement, attrs);
+  sfs::sqlite::SQLiteMultipart mpdb(store->db_conn);
+  auto mp = mpdb.get_multipart(upload_id);
+  if (mp.has_value()) {
+    lsfs_dout(dpp, -1)
+        << fmt::format(
+               "BUG: upload already exists, upload_id: {}, oid: {}", upload_id,
+               get_key()
+           )
+        << dendl;
+    // upload exists and has been initiated, return error.
+    return -ERR_INTERNAL_ERROR;
+  }
+
+  // create multipart
+  uuid_d uuid;
+  uuid.generate_random();
+  auto now = ceph::real_time::clock::now();
+
+  sfs::sqlite::DBOPMultipart mpop{
+      .bucket_id = bucket->get_bucket_id(),
+      .upload_id = upload_id,
+      .state = sfs::MultipartState::INIT,
+      .state_change_time = now,
+      .obj_name = oid,
+      .obj_uuid = uuid,
+      .meta_str = meta_str,
+      .owner_id = owner,
+      .mtime = now,
+      .attrs = attrs,
+      .placement = dest_placement,
+  };
+
+  try {
+    auto id = mpdb.insert(mpop);
+    ceph_assert(id > 0);
+  } catch (std::system_error& e) {
+    lsfs_dout(dpp, -1)
+        << fmt::format(
+               "BUG: upload already exists, raced! upload_id: {}, oid: {}",
+               upload_id, get_key()
+           )
+        << dendl;
+    return -ERR_INTERNAL_ERROR;
+  }
+  lsfs_dout(dpp, 10)
+      << fmt::format(
+             "created multipart upload_id: {}, oid: {}, owner: {}", upload_id,
+             get_key(), owner.get_display_name()
+         )
+      << dendl;
+  lsfs_dout(dpp, 10) << "attrs: " << attrs << dendl;
+
+  // set placement in case we get an info request
+  placement = dest_placement;
   return 0;
 }
 
-int SFSMultipartUpload::list_parts(
+int SFSMultipartUploadV2::list_parts(
     const DoutPrefixProvider* dpp, CephContext* cct, int num_parts, int marker,
     int* next_marker, bool* truncated, bool assume_unsorted
 ) {
   lsfs_dout(dpp, 10) << "num_parts: " << num_parts << ", marker: " << marker
                      << dendl;
+
   ceph_assert(marker >= 0);
   ceph_assert(num_parts >= 0);
 
-  std::map<uint32_t, std::unique_ptr<MultipartPart>> wanted;
+  sfs::sqlite::SQLiteMultipart mpdb(store->db_conn);
 
-  auto parts_map = mp->get_parts();
-  uint32_t last_part_num = 0;
-  for (const auto& [n, partobj] : parts_map) {
-    if (n < (uint32_t)marker) {
+  auto entries =
+      mpdb.list_parts(upload_id, num_parts, marker, next_marker, truncated);
+
+  for (const auto& entry : entries) {
+    if (!entry.is_finished()) {
+      // part is not finished, ignore.
       continue;
     }
-    if (wanted.size() == (size_t)num_parts) {
-      if (truncated) {
-        *truncated = true;
-      }
-      if (next_marker) {
-        *next_marker = last_part_num;
-      }
-      break;
-    }
-    wanted[n] = std::make_unique<SFSMultipartPart>(n, partobj);
-    last_part_num = n;
+    parts[entry.part_num] = std::make_unique<SFSMultipartPartV2>(entry);
   }
+  return 0;
+}
 
-  lsfs_dout(dpp, 10) << "return " << wanted.size() << " parts of "
-                     << parts_map.size() << " total, last: " << last_part_num
+int SFSMultipartUploadV2::abort(
+    const DoutPrefixProvider* dpp, CephContext* cct
+) {
+  lsfs_dout(dpp, 10) << "upload_id: " << upload_id << dendl;
+
+  sfs::sqlite::SQLiteMultipart mpdb(store->db_conn);
+  auto res = mpdb.abort(upload_id);
+
+  lsfs_dout(dpp, 10) << "upload_id: " << upload_id << ", aborted: " << res
                      << dendl;
 
-  parts.swap(wanted);
-  return 0;
+  return (res ? 0 : -ERR_NO_SUCH_UPLOAD);
 }
 
-int SFSMultipartUpload::abort(const DoutPrefixProvider* dpp, CephContext* cct) {
-  lsfs_dout(dpp, 10) << "aborting upload id " << mp->upload_id << dendl;
-  if (mp->state == sfs::MultipartUpload::State::ABORTED ||
-      mp->state == sfs::MultipartUpload::State::DONE) {
-    return -ERR_NO_SUCH_UPLOAD;
-  }
-  bucketref->abort_multipart(dpp, mp->upload_id);
-  return 0;
-}
-
-int SFSMultipartUpload::complete(
+int SFSMultipartUploadV2::complete(
     const DoutPrefixProvider* dpp, optional_yield y, CephContext* cct,
     std::map<int, std::string>& part_etags,
     std::list<rgw_obj_index_key>& remove_objs, uint64_t& accounted_size,
     bool& compressed, RGWCompressionInfo& cs_info, off_t& ofs, std::string& tag,
     ACLOwner& owner, uint64_t olh_epoch, rgw::sal::Object* target_obj
 ) {
-  lsfs_dout(dpp, 10) << "part_etags: " << part_etags
-                     << ", accounted_size: " << accounted_size
-                     << ", compressed: " << compressed << ", offset: " << ofs
-                     << ", tag: " << tag
-                     << ", owner: " << owner.get_display_name()
-                     << ", epoch: " << olh_epoch
-                     << ", target obj: " << target_obj->get_key()
-                     << ", obj: " << mp->objref->name << dendl;
+  lsfs_dout(dpp, 10) << fmt::format(
+                            "upload_id: {}, accounted_size: {}, tag: {}, "
+                            "owner: {}, olh_epoch: {}"
+                            ", target_obj: {}",
+                            upload_id, accounted_size, tag,
+                            owner.get_display_name(), olh_epoch,
+                            target_obj->get_key()
+                        )
+                     << dendl;
+  lsfs_dout(dpp, 10) << "part_etags: " << part_etags << dendl;
 
-  if (mp->state == sfs::MultipartUpload::State::ABORTED) {
-    lsfs_dout(dpp, 10) << "multipart with upload_id " << mp->upload_id
-                       << " has been aborted." << dendl;
-    return -ERR_NO_SUCH_UPLOAD;
-  } else if (mp->state == sfs::MultipartUpload::State::DONE) {
-    lsfs_dout(dpp, 10) << "multipart with upload_id " << mp->upload_id
-                       << " has been completed." << dendl;
+  sfs::sqlite::SQLiteMultipart mpdb(store->db_conn);
+  auto res = mpdb.mark_complete(upload_id);
+  if (!res) {
+    lsfs_dout(dpp, 10) << fmt::format(
+                              "unable to find on-going multipart upload id {}",
+                              upload_id
+                          )
+                       << dendl;
     return -ERR_NO_SUCH_UPLOAD;
   }
 
-  auto parts = mp->get_parts();
+  auto parts = mpdb.get_parts(upload_id);
   if (parts.size() != part_etags.size()) {
     return -ERR_INVALID_PART;
   }
 
-  mp->aggregate();
+  auto mp = mpdb.get_multipart(upload_id);
+  ceph_assert(mp.has_value());
+  ceph_assert(mp->upload_id == upload_id);
+  ceph_assert(mp->state == sfs::MultipartState::COMPLETE);
 
-  MD5 hash;
+  // validate parts & build final etag
 
-  ceph_assert(target_obj);
-  ceph_assert(target_obj->get_name() == mp->objref->name);
-  sfs::ObjectRef outobj = bucketref->create_version(target_obj->get_key());
-  std::filesystem::path outpath =
-      store->get_data_path() / outobj->get_storage_path();
-  // ensure directory structure exists
-  std::filesystem::create_directories(outpath.parent_path());
-
-  ofstream out{outpath, std::ios::binary | std::ios::app};
+  // we can only have at most 10k parts
+  if (part_etags.size() > 10000) {
+    return -ERR_INVALID_PART;
+  }
 
   auto parts_it = parts.cbegin();
   auto etags_it = part_etags.cbegin();
 
+  uint64_t expected_size = 0;
+  MD5 hash;
+
   for (; parts_it != parts.cend() && etags_it != part_etags.cend();
        ++parts_it, ++etags_it) {
     ceph_assert(etags_it->first >= 0);
-    if (parts_it->first != (uint32_t)etags_it->first) {
-      // mismatch part num
-      lsfs_dout(dpp, 0) << "mismatch part num, expected: " << parts_it->first
-                        << ", got " << etags_it->first << dendl;
+
+    auto& part = *parts_it;
+    auto etag = rgw_string_unquote(etags_it->second);
+
+    if (!part.is_finished()) {
+      // there is still at least one part being written to, return error.
       return -ERR_INVALID_PART;
     }
 
-    auto part = parts_it->second;
-    auto part_it_etag = rgw_string_unquote(etags_it->second);
-    if (part->etag != part_it_etag) {
-      lsfs_dout(dpp, 0) << "mismatch part etag, expected: " << part->etag
-                        << ", got " << part_it_etag << dendl;
+    if (part.part_num != static_cast<uint32_t>(etags_it->first)) {
+      lsfs_dout(dpp, 1) << fmt::format(
+                               "part num mismatch, expected {}, got {}",
+                               part.part_num, etags_it->first
+                           )
+                        << dendl;
+      return -ERR_INVALID_PART_ORDER;
+    }
+
+    if (part.etag != etag) {
+      lsfs_dout(dpp, 1) << fmt::format(
+                               "part etag mismatch, expected {}, got {}",
+                               part.etag.value(), etag
+                           )
+                        << dendl;
       return -ERR_INVALID_PART;
     }
 
     char part_etag[CEPH_CRYPTO_MD5_DIGESTSIZE];
-    hex_to_buf(part->etag.c_str(), part_etag, CEPH_CRYPTO_MD5_DIGESTSIZE);
+    hex_to_buf(
+        part.etag.value().c_str(), part_etag, CEPH_CRYPTO_MD5_DIGESTSIZE
+    );
     hash.Update((const unsigned char*)part_etag, sizeof(part_etag));
 
-    // copy multipart object to object at offset
-    std::filesystem::path partpath =
-        store->get_data_path() / part->objref->path.to_path();
-
-    ceph_assert(std::filesystem::exists(partpath));
-    ceph_assert(std::filesystem::file_size(partpath) == part->len);
-
-    lsfs_dout(dpp, 10) << "read part " << parts_it->first << " from "
-                       << partpath << ", size: " << part->len << dendl;
-    std::ifstream part_in{partpath, std::ios::binary};
-
-    uint64_t read_len = 0;
-    uint64_t block_size = 4194304;  // 4MB
-    char* buf = (char*)std::malloc(block_size);
-    while (read_len < part->len) {
-      std::memset(buf, 0, block_size);
-      uint64_t to_read = std::min((part->len - read_len), block_size);
-      part_in.seekg(read_len);
-      if (!part_in.read(buf, to_read)) {
-        lsfs_dout(dpp, 0) << "error reading part " << parts_it->first
-                          << " from " << partpath << ", bytes: " << to_read
-                          << dendl;
-        std::free(buf);
-        return -ERR_INVALID_PART;
-      }
-
-      auto cur_offset = out.tellp();
-      out.seekp(0);
-      if (!out.write(buf, to_read)) {
-        lsfs_dout(dpp, 0) << "error writing part " << parts_it->first << " to "
-                          << outpath << ", bytes: " << to_read
-                          << ", offset: " << cur_offset << dendl;
-        std::free(buf);
-        return -ERR_INVALID_PART;
-      }
-      read_len += to_read;
-      ofs += to_read;
-      accounted_size += to_read;
-    }
-    std::free(buf);
-    lsfs_dout(dpp, 10) << "copied part " << parts_it->first
-                       << ", accounted: " << accounted_size
-                       << ", offset: " << ofs << dendl;
-    part_in.close();
+    expected_size += part.len;
   }
 
-  out.flush();
-  out.close();
+  if (store->filesystem_stats_avail_bytes.load() < expected_size) {
+    lsfs_dout(dpp, -1) << fmt::format(
+                              "filesystem stat reservation check hit. "
+                              "avail_bytes: {}, avail_pct: "
+                              "{}, total_bytes: {}, expected size: {}",
+                              store->filesystem_stats_avail_bytes,
+                              store->filesystem_stats_avail_percent,
+                              store->filesystem_stats_total_bytes, expected_size
+                          )
+                       << dendl;
+    return -ERR_QUOTA_EXCEEDED;
+  }
 
-  // we are supposed to only have at most 10000 parts.
-  ceph_assert(part_etags.size() <= 10000);
+  // calculate final etag
 
-#define SUFFIX_LEN (6 + 1)  // '-' + len(10000) + '\0'
   char final_etag[CEPH_CRYPTO_MD5_DIGESTSIZE];
-  char final_etag_str[(CEPH_CRYPTO_MD5_DIGESTSIZE * 2) + SUFFIX_LEN];
+  // final str contains twice as many bytes because it's storing each byte as an
+  // hex string (i.e., one 8 bit char for each 4 bit per byte).
+  char final_etag_str
+      [(CEPH_CRYPTO_MD5_DIGESTSIZE * 2) + MULTIPART_PART_SUFFIX_LEN];
   hash.Final((unsigned char*)final_etag);
   buf_to_hex((unsigned char*)final_etag, sizeof(final_etag), final_etag_str);
-  snprintf(
-      &final_etag_str[CEPH_CRYPTO_MD5_DIGESTSIZE * 2],
+  std::snprintf(
+      &final_etag_str
+          [CEPH_CRYPTO_MD5_DIGESTSIZE * 2],  // start at end of hex str
       sizeof(final_etag_str) - (CEPH_CRYPTO_MD5_DIGESTSIZE * 2), "-%lld",
       (long long)part_etags.size()
   );
   std::string etag = final_etag_str;
 
-  lsfs_dout(dpp, 10) << "final object " << mp->objref->name
-                     << ", path: " << outpath
-                     << ", accounted: " << accounted_size << ", offset: " << ofs
-                     << ", etag: " << etag << dendl;
+  lsfs_dout(dpp, 10) << fmt::format(
+                            "upload_id: {}, final etag: {}", upload_id, etag
+                        )
+                     << dendl;
 
-  sfs::Object::Meta meta = outobj->get_meta();
-  meta.size = accounted_size;
-  meta.etag = etag;
-  meta.mtime = ceph::real_clock::now();
-  outobj->update_meta(meta);
-  outobj->update_attrs(mp->attrs);
+  // start aggregating final object
+  res = mpdb.mark_aggregating(upload_id);
+  ceph_assert(res == true);
 
-  // remove all multipart objects. This should be done lazily in the future.
-  for (const auto& [n, part] : parts) {
-    std::filesystem::path partpath =
-        store->get_data_path() / part->objref->path.to_path();
+  std::filesystem::path objpath =
+      store->get_data_path() / UUIDPath(mp->obj_uuid).to_path();
 
-    ceph_assert(std::filesystem::exists(partpath));
-    std::filesystem::remove(partpath);
+  int objfd = ::open(objpath.c_str(), O_WRONLY | O_BINARY | O_CREAT, 0600);
+  if (objfd < 0) {
+    lsfs_dout(dpp, -1) << fmt::format(
+                              "unable to open object file {} to write: {}",
+                              objpath, cpp_strerror(errno)
+                          )
+                       << dendl;
+    return -ERR_INTERNAL_ERROR;
   }
-  lsfs_dout(dpp, 10) << "removed " << parts.size() << " part objects" << dendl;
-  bucketref->finish_multipart(mp->upload_id, outobj);
+  size_t accounted_bytes = 0;
 
-  return 0;
-}
+  for (const auto& part : parts) {
+    MultipartPartPath partpath(mp->obj_uuid, part.part_num);
+    std::filesystem::path path = store->get_data_path() / partpath.to_path();
 
-int SFSMultipartUpload::get_info(
-    const DoutPrefixProvider* dpp, optional_yield y, rgw_placement_rule** rule,
-    rgw::sal::Attrs* attrs
-) {
-  lsfs_dout(dpp, 10) << "upload_id: " << mp->upload_id
-                     << ", obj: " << mp->objref->name << dendl;
+    ceph_assert(std::filesystem::exists(path));
+    auto partsize = std::filesystem::file_size(path);
+    if (partsize != part.len) {
+      lsfs_dout(dpp, 1) << fmt::format(
+                               "part size mismatch, expected {}, found: {}",
+                               part.len, partsize
+                           )
+                        << dendl;
+      return -ERR_INVALID_PART;
+    }
 
-  if (rule) {
-    rgw_placement_rule& placement = bucketref->get_placement_rule();
-    if (!placement.empty()) {
-      *rule = &placement;
-    } else {
-      *rule = nullptr;
+    int partfd = ::open(path.c_str(), O_RDONLY | O_BINARY);
+    if (partfd < 0) {
+      lsfs_dout(dpp, -1) << fmt::format(
+                                "unable to open part file {} for reading: {}",
+                                path, cpp_strerror(errno)
+                            )
+                         << dendl;
+      return -ERR_INTERNAL_ERROR;
+    }
+    int ret = ::copy_file_range(partfd, NULL, objfd, NULL, partsize, 0);
+    if (ret < 0) {
+      // this is an unexpected error, we don't know how to recover from it.
+      lsfs_dout(dpp, -1)
+          << fmt::format(
+                 "unable to copy part {} (fd {}) to object file {} (fd {}): {}",
+                 part.part_num, partfd, objpath, objfd, cpp_strerror(errno)
+             )
+          << dendl;
+      ceph_abort("Unexpected error aggregating multipart upload");
+    }
+    accounted_bytes += partsize;
+    ret = ::fsync(objfd);
+    if (ret < 0) {
+      lsfs_dout(dpp, -1) << fmt::format(
+                                "failed fsync fd: {}, on obj file: {}: {}",
+                                objfd, objpath, cpp_strerror(ret)
+                            )
+                         << dendl;
+      ceph_abort("Unexpected error fsync'ing obj path");
+    }
+    ret = ::close(partfd);
+    if (ret < 0) {
+      lsfs_dout(dpp, -1) << fmt::format(
+                                "failed closing fd: {}, on part file: {}: {}",
+                                partfd, path, cpp_strerror(ret)
+                            )
+                         << dendl;
+      ceph_abort("Unexpected error on closing part path");
     }
   }
 
-  if (mp->state == sfs::MultipartUpload::State::NONE) {
-    lsfs_dout(dpp, 10) << "upload_id: " << mp->upload_id << " does not exist!"
+  int ret = ::close(objfd);
+  if (ret < 0) {
+    lsfs_dout(dpp, -1) << fmt::format(
+                              "failed closing fd: {}, on obj file: {}: {}",
+                              objfd, objpath, cpp_strerror(ret)
+                          )
                        << dendl;
-    return -ERR_NO_SUCH_UPLOAD;
-  } else if (mp->state == sfs::MultipartUpload::State::ABORTED) {
-    lsfs_dout(dpp, 10) << "upload_id: " << mp->upload_id << " has been aborted!"
+  }
+  auto final_obj_size = std::filesystem::file_size(objpath);
+  if (accounted_bytes != final_obj_size) {
+    // this is an unexpected error, probably a bug - die.
+    lsfs_dout(dpp, -1) << fmt::format(
+                              "BUG: expected {} bytes, found {} bytes",
+                              accounted_bytes, final_obj_size
+                          )
+                       << dendl;
+    ceph_abort("BUG: on final object for multipart upload!");
+  }
+
+  lsfs_dout(dpp, 10)
+      << fmt::format(
+             "finished building final object file at {}, size: {}, etag: {}",
+             objpath, final_obj_size, etag
+         )
+      << dendl;
+
+  // NOTE(jecluis): this is the annoying bit: we have the final object having
+  // been built at the path described by `mp->obj_uuid`, but we need to have it
+  // as a new version of the object of `mp->obj_name`. We will need to create a
+  // new object, or a new version, and move the file to its location as if we
+  // were writing directly to it.
+
+  ObjectRef objref;
+  try {
+    objref = bucketref->create_version(target_obj->get_key());
+  } catch (const std::system_error& e) {
+    lsfs_dout(dpp, -1)
+        << fmt::format(
+               "error while fetching obj ref from bucket: {}, oid: {}: {}",
+               bucketref->get_bucket_id(), mp->obj_name, e.what()
+           )
+        << dendl;
+    return -ERR_INTERNAL_ERROR;
+  }
+  auto destpath = store->get_data_path() / objref->get_storage_path();
+  lsfs_dout(
+      dpp, 10
+  ) << fmt::format("moving final object from {} to {}", objpath, destpath)
+    << dendl;
+
+  std::error_code ec;
+  std::filesystem::create_directories(destpath.parent_path(), ec);
+  if (ec) {
+    lsfs_dout(dpp, -1)
+        << fmt::format(
+               "failed to create directories for destination object {}: {}",
+               destpath, ec.message()
+           )
+        << dendl;
+    return -ERR_INTERNAL_ERROR;
+  }
+
+  ec.clear();
+  ret = ::rename(objpath.c_str(), destpath.c_str());
+  if (ret < 0) {
+    lsfs_dout(dpp, -1) << fmt::format(
+                              "failed to rename object file from {} to {}: {}",
+                              objpath, destpath, cpp_strerror(errno)
+                          )
+                       << dendl;
+    return -ERR_INTERNAL_ERROR;
+  }
+
+  objref->update_attrs(mp->attrs);
+  objref->update_meta(
+      {.size = accounted_bytes,
+       .etag = etag,
+       .mtime = ceph::real_time::clock::now()}
+  );
+  try {
+    objref->metadata_finish(store, bucketref->get_info().versioning_enabled());
+  } catch (const std::system_error& e) {
+    lsfs_dout(dpp, -1) << fmt::format(
+                              "failed to update db object {}: {}", objref->name,
+                              e.what()
+                          )
+                       << dendl;
+    return -ERR_INTERNAL_ERROR;
+  }
+
+  // mark multipart upload done
+  res = mpdb.mark_done(upload_id);
+  ceph_assert(res);
+
+  return 0;
+}
+
+int SFSMultipartUploadV2::get_info(
+    const DoutPrefixProvider* dpp, optional_yield y, rgw_placement_rule** rule,
+    rgw::sal::Attrs* attrs
+) {
+  lsfs_dout(dpp, 10) << fmt::format(
+                            "upload_id: {}, obj: {}", upload_id, get_key()
+                        )
+                     << dendl;
+
+  sfs::sqlite::SQLiteMultipart mpdb(store->db_conn);
+  auto mp = mpdb.get_multipart(upload_id);
+  if (!mp.has_value()) {
+    lsfs_dout(dpp, 10) << fmt::format(
+                              "unable to find upload_id: {} in db", upload_id
+                          )
                        << dendl;
     return -ERR_NO_SUCH_UPLOAD;
   }
 
+  if (mp->state != MultipartState::INIT &&
+      mp->state != MultipartState::INPROGRESS) {
+    lsfs_dout(dpp, 10) << fmt::format(
+                              "upload id {} not in available state", upload_id
+                          )
+                       << dendl;
+    return -ERR_NO_SUCH_UPLOAD;
+  }
+
+  if (rule) {
+    if (placement.empty()) {
+      *rule = nullptr;
+    } else {
+      *rule = &placement;
+    }
+  }
+
   if (attrs) {
-    *attrs = mp->objref->get_attrs();
+    *attrs = mp->attrs;
   }
 
   return 0;
 }
 
-std::unique_ptr<Writer> SFSMultipartUpload::get_writer(
+std::unique_ptr<Writer> SFSMultipartUploadV2::get_writer(
     const DoutPrefixProvider* dpp, optional_yield y, rgw::sal::Object* head_obj,
-    const rgw_user& _owner, const rgw_placement_rule* ptail_placement_rule,
+    const rgw_user& owner, const rgw_placement_rule* ptail_placement_rule,
     uint64_t part_num, const std::string& part_num_str
 ) {
-  lsfs_dout(dpp, 10) << "head obj: " << head_obj << ", owner: " << _owner
-                     << ", part num: " << part_num << dendl;
+  ceph_assert(part_num <= 10000);
+  uint32_t pnum = static_cast<uint32_t>(part_num);
 
-  ceph_assert(head_obj->get_key().name == mp->objref->name);
-  auto partref = mp->get_part(part_num);
+  lsfs_dout(dpp, 10)
+      << fmt::format(
+             "head_obj: {}, owner: {}, upload_id: {}, part_num: {}",
+             head_obj->get_key().name, owner.id, upload_id, pnum
+         )
+      << dendl;
 
-  return std::make_unique<SFSMultipartWriter>(
-      dpp, y, this, store, partref, part_num
+  return std::make_unique<SFSMultipartWriterV2>(dpp, y, upload_id, store, pnum);
+}
+
+int SFSMultipartUploadV2::list_multiparts(
+    const DoutPrefixProvider* dpp, rgw::sal::SFStore* store,
+    rgw::sal::SFSBucket* bucket, BucketRef bucketref, const std::string& prefix,
+    std::string& marker, const std::string& delim, const int& max_uploads,
+    std::vector<std::unique_ptr<MultipartUpload>>& uploads,
+    std::map<std::string, bool>* common_prefixes, bool* is_truncated
+) {
+  auto cls = SFSMultipartUploadV2::get_cls_name();
+  auto bucket_name = bucket->get_name();
+  lsfs_dout_for(dpp, 10, cls)
+      << fmt::format(
+             "bucket: {}, prefix: {}, marker: {}, delim: {}, max_uploads: {}",
+             bucket_name, prefix, marker, delim, max_uploads
+         )
+      << dendl;
+
+  sqlite::SQLiteMultipart mpdb(store->db_conn);
+  auto entries = mpdb.list_multiparts(
+      bucket_name, prefix, marker, delim, max_uploads, is_truncated
   );
+  if (!entries.has_value()) {
+    lsfs_dout_for(dpp, -1, cls) << fmt::format(
+                                       "unable to find multipart uploads for "
+                                       "bucket {} -- bucket not found!",
+                                       bucket_name
+                                   )
+                                << dendl;
+    return -ERR_NO_SUCH_BUCKET;
+  }
+
+  ceph_assert(uploads.size() == 0);  // make sure rgw is not being naughty :)
+  for (const auto& entry : entries.value()) {
+    uploads.push_back(std::make_unique<SFSMultipartUploadV2>(
+        store, bucket, bucketref, entry.upload_id, entry.obj_name,
+        entry.owner_id, entry.mtime
+    ));
+    lsfs_dout_for(dpp, 10, cls)
+        << fmt::format(
+               "found multipart upload id: {}, bucket: {}, obj: {}",
+               entry.upload_id, bucket->get_key().name, entry.obj_name
+           )
+        << dendl;
+  }
+  lsfs_dout_for(dpp, 10, cls)
+      << fmt::format("found {} multipart uploads", uploads.size()) << dendl;
+  return 0;
 }
 
-void SFSMultipartUpload::dump(Formatter* f) const {
-  // TODO
+int SFSMultipartUploadV2::abort_multiparts(
+    const DoutPrefixProvider* dpp, rgw::sal::SFStore* store,
+    rgw::sal::SFSBucket* bucket
+) {
+  auto cls = SFSMultipartUploadV2::get_cls_name();
+  auto bucket_name = bucket->get_name();
+  lsfs_dout_for(dpp, 10, cls)
+      << fmt::format("bucket: {}", bucket_name) << dendl;
+
+  sqlite::SQLiteMultipart mpdb(store->db_conn);
+  auto num_aborted = mpdb.abort_multiparts(bucket_name);
+  if (num_aborted < 0) {
+    lsfs_dout_for(dpp, -1, cls) << fmt::format(
+                                       "error aborting multipart uploads on "
+                                       "bucket {} -- bucket not found!",
+                                       bucket_name
+                                   )
+                                << dendl;
+    return -ERR_NO_SUCH_BUCKET;
+  }
+  lsfs_dout_for(dpp, 10, cls)
+      << fmt::format(
+             "aborted {} multipart uploads on bucket {}", num_aborted,
+             bucket_name
+         )
+      << dendl;
+  return 0;
 }
 
-}  // namespace rgw::sal
+}  // namespace rgw::sal::sfs

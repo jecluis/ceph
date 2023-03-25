@@ -69,27 +69,28 @@ class SFSAtomicWriter : public StoreWriter {
   const std::string get_cls_name() const { return "atomic_writer"; }
 };
 
-class SFSMultipartWriter : public StoreWriter {
+namespace sfs {
+
+class SFSMultipartWriterV2 : public StoreWriter {
   const rgw::sal::SFStore* store;
-  rgw::sal::sfs::MultipartObjectRef partref;
-  uint64_t partnum;
-  uint64_t internal_offset;
-  uint64_t part_offset;
-  uint64_t part_len;
+  const std::string upload_id;
+  uint32_t part_num;
+  uint64_t bytes_written;
+  int fd;
 
  public:
-  SFSMultipartWriter(
-      const DoutPrefixProvider* _dpp, optional_yield y, MultipartUpload* upload,
-      const SFStore* _store, sfs::MultipartObjectRef _partref, uint64_t _partnum
+  SFSMultipartWriterV2(
+      const DoutPrefixProvider* _dpp, optional_yield _y,
+      const std::string& _upload_id, const rgw::sal::SFStore* _store,
+      uint32_t _part_num
   )
-      : StoreWriter(_dpp, y),
+      : StoreWriter(_dpp, _y),
         store(_store),
-        partref(_partref),
-        partnum(_partnum),
-        internal_offset(0),
-        part_offset(0),
-        part_len(0) {}
-  ~SFSMultipartWriter() = default;
+        upload_id(_upload_id),
+        part_num(_part_num),
+        bytes_written(0),
+        fd(-1) {}
+  virtual ~SFSMultipartWriterV2();
 
   virtual int prepare(optional_yield y) override;
   virtual int process(bufferlist&& data, uint64_t offset) override;
@@ -101,8 +102,13 @@ class SFSMultipartWriter : public StoreWriter {
       optional_yield y
   ) override;
 
-  const std::string get_cls_name() const { return "multipart_writer"; }
+  const std::string get_cls_name() const { return "multipart_writer_v2"; }
+
+ private:
+  int close() noexcept;
 };
+
+}  // namespace sfs
 
 }  // namespace rgw::sal
 
