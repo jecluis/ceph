@@ -38,9 +38,10 @@
 #include "rgw_sal.h"
 #include "rgw_status_page.h"
 
-#define lsfs_dout(_dpp, _lvl)                                               \
-  ldpp_dout(_dpp, _lvl) << "> " << this->get_cls_name() << "::" << __func__ \
-                        << " "
+#define lsfs_dout_for(_dpp, _lvl, _whom) \
+  ldpp_dout(_dpp, _lvl) << "> " << _whom << "::" << __func__ << " "
+
+#define lsfs_dout(_dpp, _lvl) lsfs_dout_for(_dpp, _lvl, this->get_cls_name())
 
 namespace rgw::sal::sfs {
 class SFSGC;

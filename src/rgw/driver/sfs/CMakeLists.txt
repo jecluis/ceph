@@ -1,4 +1,4 @@
-#need to update cmake version here
+# need to update cmake version here
 cmake_minimum_required(VERSION 3.14.0)
 project(sfs)
 
@@ -6,10 +6,10 @@ option(USE_SFS "Enable SFS" ON)
 
 find_package(SQLite3 REQUIRED)
 
-#These flags should not be necessary because radosgw is linked with sqlite
-#library via system package imported by cmake with find_package().
-#We keep these because dbstore backend is doing that in its CMakeLists.txt
-#and we decided to conform with it.
+# These flags should not be necessary because radosgw is linked with sqlite
+# library via system package imported by cmake with find_package().
+# We keep these because dbstore backend is doing that in its CMakeLists.txt
+# and we decided to conform with it.
 set(SQLITE_COMPILE_FLAGS "-DSQLITE_THREADSAFE=1")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${SQLITE_COMPILE_FLAGS}")
 
@@ -22,8 +22,10 @@ set(sfs_srcs
     sqlite/sqlite_objects.cc
     sqlite/sqlite_versioned_objects.cc
     sqlite/sqlite_lifecycle.cc
+    sqlite/sqlite_multipart.cc
     sqlite/users/users_conversions.cc
     sqlite/buckets/bucket_conversions.cc
+    sqlite/buckets/multipart_conversions.cc
     sqlite/dbconn.cc
     sqlite/errors.cc
     bucket.cc
@@ -43,6 +45,7 @@ add_library(sfs STATIC ${sfs_srcs})
 target_include_directories(sfs PUBLIC "${CMAKE_SOURCE_DIR}/src/fmt/include")
 target_include_directories(sfs PUBLIC "${CMAKE_SOURCE_DIR}/src/rgw")
 set(link_targets spawn)
+
 if(WITH_JAEGER)
   list(APPEND link_targets jaeger_base)
 endif()

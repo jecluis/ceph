@@ -377,7 +377,7 @@ std::unique_ptr<MPSerializer> SFSObject::get_serializer(
     const DoutPrefixProvider* dpp, const std::string& lock_name
 ) {
   lsfs_dout(dpp, 10) << "lock name: " << lock_name << dendl;
-  return std::make_unique<SFSMultipartSerializer>();
+  return std::make_unique<sfs::SFSMultipartSerializer>();
 }
 
 int SFSObject::transition(

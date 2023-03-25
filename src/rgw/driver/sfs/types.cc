@@ -260,51 +260,6 @@ void Object::delete_object_data(SFStore* store, bool all) const {
   }
 }
 
-void MultipartObject::_abort(const DoutPrefixProvider* dpp) {
-  // assumes being called while holding the lock.
-  ceph_assert(aborted);
-  state = State::ABORTED;
-  auto path = objref->path.to_path();
-  if (std::filesystem::exists(path)) {
-    // destroy part's contents
-    if (dpp) {
-      lsfs_dout(dpp, 10) << "remove part contents at " << path << dendl;
-    }
-    std::filesystem::remove(path);
-  }
-  objref.reset();
-}
-
-void MultipartObject::abort(const DoutPrefixProvider* dpp) {
-  std::lock_guard l(lock);
-  lsfs_dout(dpp, 10) << "abort part for upload id: " << upload_id
-                     << ", state: " << state << dendl;
-  if (state == State::ABORTED) {
-    return;
-  }
-
-  aborted = true;
-  if (state == State::INPROGRESS) {
-    lsfs_dout(dpp, 10) << "part upload in progress, wait to abort." << dendl;
-    return;
-  }
-  _abort(dpp);
-}
-
-void MultipartUpload::abort(const DoutPrefixProvider* dpp) {
-  std::lock_guard l(parts_map_lock);
-  lsfs_dout(dpp, 10) << "aborting multipart upload id: " << upload_id
-                     << ", object: " << objref->name
-                     << ", num parts: " << parts.size() << dendl;
-
-  state = State::ABORTED;
-  for (const auto& [id, part] : parts) {
-    part->abort(dpp);
-  }
-  parts.clear();
-  objref.reset();
-}
-
 ObjectRef Bucket::create_version(const rgw_obj_key& key) {
   // even if a specific version was not asked we generate one
   // non-versioned bucket objects will also have a version_id

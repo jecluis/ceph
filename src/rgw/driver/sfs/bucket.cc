@@ -194,7 +194,6 @@ int SFSBucket::remove_bucket(
       return -ENOENT;
     }
   }
-  bucket->abort_multiparts(dpp);
   // at this point bucket should be empty and we're good to go
   sfs::sqlite::SQLiteBuckets db_buckets(store->db_conn);
   auto db_bucket = db_buckets.get_bucket(get_bucket_id());
@@ -302,8 +301,11 @@ std::unique_ptr<MultipartUpload> SFSBucket::get_multipart_upload(
   if (id.empty()) {
     id = bucket->gen_multipart_upload_id();
   }
-  auto mp = bucket->get_multipart(id, oid, owner, mtime);
-  return std::make_unique<SFSMultipartUpload>(store, this, bucket, mp);
+  // auto mp = bucket->get_multipart(id, oid, owner, mtime);
+  // return std::make_unique<sfs::SFSMultipartUpload>(store, this, bucket, mp);
+  return std::make_unique<sfs::SFSMultipartUploadV2>(
+      store, this, bucket, id, oid, owner, mtime
+  );
 }
 
 /**
@@ -327,46 +329,27 @@ int SFSBucket::list_multiparts(
     std::vector<std::unique_ptr<MultipartUpload>>& uploads,
     std::map<std::string, bool>* common_prefixes, bool* is_truncated
 ) {
-  /** List multipart uploads currently in this bucket */
-  lsfs_dout(dpp, 10) << "prefix: " << prefix << ", marker: " << marker
-                     << ", delim: " << delim << ", max_uploads: " << max_uploads
-                     << dendl;
+  lsfs_dout(dpp, 10)
+      << fmt::format(
+             "prefix: {}, marker: {}, delim: {}, max_uploads: {}", prefix,
+             marker, delim, max_uploads
+         )
+      << dendl;
 
-  auto mps = bucket->get_multiparts();
-  int num_uploads = 0;
-
-  // we are going to check markers by the multipart's meta string, so we need a
-  // map with those entries ordered before we can take action.
-  std::map<std::string, sfs::MultipartUploadRef> entries;
-  for (const auto& [mpid, mp] : mps) {
-    entries[mp->get_meta_str()] = mp;
-  }
-
-  for (const auto& [metastr, mp] : entries) {
-    if (num_uploads >= max_uploads) {
-      if (is_truncated) {
-        *is_truncated = true;
-      }
-      break;
-    }
-    if (metastr <= marker) {
-      continue;
-    }
-    uploads.push_back(
-        std::make_unique<SFSMultipartUpload>(store, this, bucket, mp)
-    );
-    ++num_uploads;
-  }
-
-  return 0;
+  return sfs::SFSMultipartUploadV2::list_multiparts(
+      dpp, store, this, bucket, prefix, marker, delim, max_uploads, uploads,
+      common_prefixes, is_truncated
+  );
 }
 
 int SFSBucket::abort_multiparts(
     const DoutPrefixProvider* dpp, CephContext* cct
 ) {
-  lsfs_dout(dpp, 10) << "aborting multiparts on bucket " << get_name() << dendl;
-  bucket->abort_multiparts(dpp);
-  return 0;
+  lsfs_dout(
+      dpp, 10
+  ) << fmt::format("aborting multipart uploads on bucket {}", get_name())
+    << dendl;
+  return sfs::SFSMultipartUploadV2::abort_multiparts(dpp, store, this);
 }
 
 int SFSBucket::try_refresh_info(
