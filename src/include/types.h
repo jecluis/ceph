@@ -79,6 +79,9 @@ typedef off_t off64_t;
 typedef off_t loff_t;
 #endif
 
+#if FMT_VERSION >= 90000
+#include <fmt/ostream.h>
+#endif
 
 // -- io helpers --
 
