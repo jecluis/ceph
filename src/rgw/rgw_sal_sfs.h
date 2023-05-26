@@ -89,7 +89,7 @@ class UnsupportedLuaManager : public StoreLuaManager {
   virtual int list_packages(
       const DoutPrefixProvider* dpp, optional_yield y,
       rgw::lua::packages_t& packages
-  ) {
+  ) override {
     return -ENOENT;
   }
 };
@@ -166,7 +166,7 @@ class SFStore : public StoreDriver {
    * The SAL layer will often call this function during its operation, setting
    * the bucket accordingly at some point.
    */
-  virtual std::unique_ptr<Object> get_object(const rgw_obj_key& k) {
+  virtual std::unique_ptr<Object> get_object(const rgw_obj_key& k) override {
     return std::make_unique<SFSObject>(this, k);
   }
 

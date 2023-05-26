@@ -170,7 +170,7 @@ class SFSObject : public StoreObject {
       Bucket* bucket, rgw::sal::PlacementTier* tier, rgw_bucket_dir_entry& o,
       std::set<std::string>& cloud_targets, CephContext* cct,
       bool update_object, const DoutPrefixProvider* dpp, optional_yield y
-  );
+  ) override;
 
   virtual bool placement_rules_match(
       rgw_placement_rule& r1, rgw_placement_rule& r2
