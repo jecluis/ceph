@@ -409,12 +409,10 @@ class MultipartUploadSmokeTests(unittest.TestCase):
             has_error = True
         self.assertTrue(has_error)
 
-        # XXX: this is likely a bug, we should not have a multipart upload if
-        # it was not created via 'create_multipart_upload()', because it was
-        # not inited in the backend.
         res = self.s3c.list_multipart_uploads(Bucket=bucket_name)
         self.assertTrue("IsTruncated" in res and not res["IsTruncated"])
-        self.assertTrue("Uploads" in res and len(res["Uploads"]) == 1)
+        if "Uploads" in res:
+            self.assertTrue("Uploads" in res and len(res["Uploads"]) == 0)
 
         res = self.s3c.create_multipart_upload(Bucket=bucket_name, Key=objname)
         self.assertTrue("UploadId" in res)
@@ -424,7 +422,7 @@ class MultipartUploadSmokeTests(unittest.TestCase):
 
         res = self.s3c.list_multipart_uploads(Bucket=bucket_name)
         self.assertTrue("IsTruncated" in res and not res["IsTruncated"])
-        self.assertTrue("Uploads" in res and len(res["Uploads"]) == 2)
+        self.assertTrue("Uploads" in res and len(res["Uploads"]) == 1)
 
         # doesn't return relevant information
         self.s3c.abort_multipart_upload(
@@ -433,7 +431,8 @@ class MultipartUploadSmokeTests(unittest.TestCase):
 
         res = self.s3c.list_multipart_uploads(Bucket=bucket_name)
         self.assertTrue("IsTruncated" in res and not res["IsTruncated"])
-        self.assertTrue("Uploads" in res and len(res["Uploads"]) == 1)
+        if "Uploads" in res:
+            self.assertTrue("Uploads" in res and len(res["Uploads"]) == 0)
 
         # ensure bucket is removed
         self.delete_bucket(bucket_name)
