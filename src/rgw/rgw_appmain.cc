@@ -552,7 +552,6 @@ void rgw::AppMain::init_notification_endpoints()
 void rgw::AppMain::init_lua()
 {
   rgw::sal::Driver* driver = env.driver;
-  int r{0};
   std::string path = g_conf().get_val<std::string>("rgw_luarocks_location");
   if (!path.empty()) {
     path += "/" + g_conf()->name.to_str();
@@ -562,7 +561,7 @@ void rgw::AppMain::init_lua()
 #ifdef WITH_RADOSGW_LUA_PACKAGES
   rgw::lua::packages_t failed_packages;
   std::string output;
-  r = rgw::lua::install_packages(dpp, driver, null_yield, path,
+  int r = rgw::lua::install_packages(dpp, driver, null_yield, path,
                                  failed_packages, output);
   if (r < 0) {
     dout(1) << "WARNING: failed to install lua packages from allowlist"
