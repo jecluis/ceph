@@ -84,3 +84,5 @@ GTAGS
 /src/python-common/build/
 .cache
 /qa/rgw/store/sfs/tests/venv/
+/qa/rgw/store/sfs/tests/_tmp*
+/install-deps-*
