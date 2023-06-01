@@ -255,6 +255,17 @@ int SFSMultipartUploadV2::complete(
       return -ERR_INVALID_PART;
     }
 
+    // part must be >= 5 MB in size, except for the last part, which can be
+    // smaller.
+    if ((part.len < 5 * 1024 * 1024) && (parts_it + 1 != parts.cend())) {
+      lsfs_dout(dpp, 10) << fmt::format(
+                                "part {} is too small, and not the last part!",
+                                part.part_num
+                            )
+                         << dendl;
+      return -ERR_TOO_SMALL;
+    }
+
     char part_etag[CEPH_CRYPTO_MD5_DIGESTSIZE];
     hex_to_buf(
         part.etag.value().c_str(), part_etag, CEPH_CRYPTO_MD5_DIGESTSIZE
