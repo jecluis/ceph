@@ -298,19 +298,25 @@ bool SQLiteMultipart::abort(const std::string& upload_id) const {
   return committed;
 }
 
+static int _mark_complete(
+    rgw::sal::sfs::sqlite::Storage& storage, const std::string& upload_id
+) {
+  storage.update_all(
+      set(c(&DBMultipart::state) = MultipartState::COMPLETE,
+          c(&DBMultipart::state_change_time) = ceph::real_time::clock::now()),
+      where(
+          is_equal(&DBMultipart::upload_id, upload_id) and
+          greater_or_equal(&DBMultipart::state, MultipartState::INIT) and
+          lesser_or_equal(&DBMultipart::state, MultipartState::INPROGRESS)
+      )
+  );
+  return storage.changes();
+}
+
 bool SQLiteMultipart::mark_complete(const std::string& upload_id) const {
   auto storage = conn->get_storage();
   auto committed = storage.transaction([&]() mutable {
-    storage.update_all(
-        set(c(&DBMultipart::state) = MultipartState::COMPLETE,
-            c(&DBMultipart::state_change_time) = ceph::real_time::clock::now()),
-        where(
-            is_equal(&DBMultipart::upload_id, upload_id) and
-            greater_or_equal(&DBMultipart::state, MultipartState::INIT) and
-            lesser_or_equal(&DBMultipart::state, MultipartState::INPROGRESS)
-        )
-    );
-    auto num_complete = storage.changes();
+    auto num_complete = _mark_complete(storage, upload_id);
     if (num_complete == 0) {
       return false;
     }
@@ -340,16 +346,7 @@ bool SQLiteMultipart::mark_complete(
       return true;
     }
 
-    storage.update_all(
-        set(c(&DBMultipart::state) = MultipartState::COMPLETE,
-            c(&DBMultipart::state_change_time) = ceph::real_time::clock::now()),
-        where(
-            is_equal(&DBMultipart::upload_id, upload_id) and
-            greater_or_equal(&DBMultipart::state, MultipartState::INIT) and
-            lesser_or_equal(&DBMultipart::state, MultipartState::INPROGRESS)
-        )
-    );
-    auto num_complete = storage.changes();
+    auto num_complete = _mark_complete(storage, upload_id);
     if (num_complete == 0) {
       return false;
     }
