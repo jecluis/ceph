@@ -21,6 +21,7 @@
 
 #include "rgw/driver/sfs/fmt.h"
 #include "rgw/driver/sfs/multipart_types.h"
+#include "rgw/driver/sfs/sqlite/buckets/multipart_definitions.h"
 #include "rgw_sal_sfs.h"
 #include "sqlite/buckets/multipart_conversions.h"
 #include "writer.h"
@@ -219,17 +220,32 @@ int SFSMultipartUploadV2::complete(
     return -ERR_INVALID_PART;
   }
 
-  auto parts_it = parts.cbegin();
+  std::map<int, sqlite::DBMultipartPart> parts_map;
+  for (const auto& p : parts) {
+    parts_map[p.part_num] = p;
+  }
+
+  for (const auto& [k, v] : part_etags) {
+    if (!parts_map.contains(k)) {
+      lsfs_dout(dpp, 1) << fmt::format(
+                               "client-specified part {} does not exist!", k
+                           )
+                        << dendl;
+      return -ERR_INVALID_PART;
+    }
+  }
+
+  auto parts_it = parts_map.cbegin();
   auto etags_it = part_etags.cbegin();
 
   uint64_t expected_size = 0;
   MD5 hash;
 
-  for (; parts_it != parts.cend() && etags_it != part_etags.cend();
+  for (; parts_it != parts_map.cend() && etags_it != part_etags.cend();
        ++parts_it, ++etags_it) {
     ceph_assert(etags_it->first >= 0);
 
-    auto& part = *parts_it;
+    auto& part = parts_it->second;
     auto etag = rgw_string_unquote(etags_it->second);
 
     if (!part.is_finished()) {
@@ -257,7 +273,8 @@ int SFSMultipartUploadV2::complete(
 
     // part must be >= 5 MB in size, except for the last part, which can be
     // smaller.
-    if ((part.len < 5 * 1024 * 1024) && (parts_it + 1 != parts.cend())) {
+    if ((part.len < 5 * 1024 * 1024) &&
+        (std::distance(parts_it, parts_map.cend()) > 1)) {
       lsfs_dout(dpp, 10) << fmt::format(
                                 "part {} is too small, and not the last part!",
                                 part.part_num
