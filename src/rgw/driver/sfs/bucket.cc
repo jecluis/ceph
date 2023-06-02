@@ -194,6 +194,20 @@ int SFSBucket::remove_bucket(
       return -ENOENT;
     }
   }
+
+  auto res = sfs::SFSMultipartUploadV2::abort_multiparts(dpp, store, this);
+  if (res < 0) {
+    lsfs_dout(dpp, -1) << fmt::format(
+                              "unable to abort multiparts on bucket {}: {}",
+                              get_name(), res
+                          )
+                       << dendl;
+    if (res == -ERR_NO_SUCH_BUCKET) {
+      return -ENOENT;
+    }
+    return -1;
+  }
+
   // at this point bucket should be empty and we're good to go
   sfs::sqlite::SQLiteBuckets db_buckets(store->db_conn);
   auto db_bucket = db_buckets.get_bucket(get_bucket_id());
