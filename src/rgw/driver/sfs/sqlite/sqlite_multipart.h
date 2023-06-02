@@ -152,6 +152,17 @@ class SQLiteMultipart {
   bool mark_complete(const std::string& upload_id) const;
 
   /**
+   * @brief Mark an on-going Multipart Upload as being complete.
+   *
+   * @param upload_id The Multipart Upload's ID.
+   * @param duplicate Whether the Multipart Upload has previously been
+   * completed.
+   * @return true if a multipart upload was marked complete.
+   * @return false if no multipart upload was found.
+   */
+  bool mark_complete(const std::string& upload_id, bool* duplicate) const;
+
+  /**
    * @brief Mark an on-going Multipart Upload as being aggregating its multiple
    * parts into a single file.
    *

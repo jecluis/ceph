@@ -193,7 +193,8 @@ int SFSMultipartUploadV2::complete(
   lsfs_dout(dpp, 10) << "part_etags: " << part_etags << dendl;
 
   sfs::sqlite::SQLiteMultipart mpdb(store->db_conn);
-  auto res = mpdb.mark_complete(upload_id);
+  bool duplicate = false;
+  auto res = mpdb.mark_complete(upload_id, &duplicate);
   if (!res) {
     lsfs_dout(dpp, 10) << fmt::format(
                               "unable to find on-going multipart upload id {}",
@@ -201,6 +202,14 @@ int SFSMultipartUploadV2::complete(
                           )
                        << dendl;
     return -ERR_NO_SUCH_UPLOAD;
+  } else if (duplicate) {
+    lsfs_dout(dpp, 10)
+        << fmt::format(
+               "multipart id {} already completed, returning success!",
+               upload_id
+           )
+        << dendl;
+    return 0;
   }
 
   auto parts = mpdb.get_parts(upload_id);

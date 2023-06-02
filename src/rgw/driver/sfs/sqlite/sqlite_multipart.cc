@@ -321,6 +321,44 @@ bool SQLiteMultipart::mark_complete(const std::string& upload_id) const {
   return committed;
 }
 
+bool SQLiteMultipart::mark_complete(
+    const std::string& upload_id, bool* duplicate
+) const {
+  ceph_assert(duplicate != nullptr);
+  auto storage = conn->get_storage();
+  auto committed = storage.transaction([&]() mutable {
+    auto entries = storage.get_all<DBMultipart>(
+        where(is_equal(&DBMultipart::upload_id, upload_id))
+    );
+    ceph_assert(entries.size() <= 1);
+    if (entries.size() == 0) {
+      return false;
+    }
+    auto entry = entries.front();
+    if (entry.state == MultipartState::DONE) {
+      *duplicate = true;
+      return true;
+    }
+
+    storage.update_all(
+        set(c(&DBMultipart::state) = MultipartState::COMPLETE,
+            c(&DBMultipart::state_change_time) = ceph::real_time::clock::now()),
+        where(
+            is_equal(&DBMultipart::upload_id, upload_id) and
+            greater_or_equal(&DBMultipart::state, MultipartState::INIT) and
+            lesser_or_equal(&DBMultipart::state, MultipartState::INPROGRESS)
+        )
+    );
+    auto num_complete = storage.changes();
+    if (num_complete == 0) {
+      return false;
+    }
+    ceph_assert(num_complete == 1);
+    return true;
+  });
+  return committed;
+}
+
 bool SQLiteMultipart::mark_aggregating(const std::string& upload_id) const {
   auto storage = conn->get_storage();
   auto committed = storage.transaction([&]() mutable {
