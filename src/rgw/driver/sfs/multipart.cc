@@ -229,75 +229,68 @@ int SFSMultipartUploadV2::complete(
     return -ERR_INVALID_PART;
   }
 
+  std::map<int, sqlite::DBMultipartPart> to_complete;
   std::map<int, sqlite::DBMultipartPart> parts_map;
   for (const auto& p : parts) {
     parts_map[p.part_num] = p;
   }
 
-  for (const auto& [k, v] : part_etags) {
-    if (!parts_map.contains(k)) {
+  ETagBuilder hash;
+  uint64_t expected_size = 0;
+  // by nature, the `part_etags` map is an ordered container; all parts are
+  // already provided sorted.
+  for (auto it = part_etags.cbegin(); it != part_etags.cend(); ++it) {
+    auto& k = it->first;
+    auto& v = it->second;
+
+    auto p = parts_map.find(k);
+    if (p == parts_map.end()) {
       lsfs_dout(dpp, 1) << fmt::format(
                                "client-specified part {} does not exist!", k
                            )
                         << dendl;
       return -ERR_INVALID_PART;
     }
-  }
-
-  auto parts_it = parts_map.cbegin();
-  auto etags_it = part_etags.cbegin();
-
-  uint64_t expected_size = 0;
-  MD5 hash;
-
-  for (; parts_it != parts_map.cend() && etags_it != part_etags.cend();
-       ++parts_it, ++etags_it) {
-    ceph_assert(etags_it->first >= 0);
-
-    auto& part = parts_it->second;
-    auto etag = rgw_string_unquote(etags_it->second);
-
+    auto part = p->second;
     if (!part.is_finished()) {
-      // there is still at least one part being written to, return error.
+      lsfs_dout(
+          dpp, 1
+      ) << fmt::format("client-specified part {} is not finished yet!", k)
+        << dendl;
+      return -ERR_INVALID_PART;
+
+    } else if (!part.etag.has_value()) {
+      lsfs_dout(
+          dpp, -1
+      ) << fmt::format("BUG: Part {} is finished and should have an etag!", k)
+        << dendl;
+      return -ERR_INTERNAL_ERROR;
+    }
+
+    ceph_assert(part.etag.has_value());
+    auto part_etag = part.etag.value();
+    auto etag = rgw_string_unquote(v);
+    if (part_etag != etag) {
+      lsfs_dout(dpp, 1)
+          << fmt::format(
+                 "client-specified part {} etag mismatch; expected {}, got {}",
+                 k, part_etag, etag
+             )
+          << dendl;
       return -ERR_INVALID_PART;
     }
 
-    if (part.part_num != static_cast<uint32_t>(etags_it->first)) {
-      lsfs_dout(dpp, 1) << fmt::format(
-                               "part num mismatch, expected {}, got {}",
-                               part.part_num, etags_it->first
-                           )
-                        << dendl;
-      return -ERR_INVALID_PART_ORDER;
-    }
-
-    if (part.etag != etag) {
-      lsfs_dout(dpp, 1) << fmt::format(
-                               "part etag mismatch, expected {}, got {}",
-                               part.etag.value(), etag
-                           )
-                        << dendl;
-      return -ERR_INVALID_PART;
-    }
-
-    // part must be >= 5 MB in size, except for the last part, which can be
-    // smaller.
     if ((part.len < 5 * 1024 * 1024) &&
-        (std::distance(parts_it, parts_map.cend()) > 1)) {
-      lsfs_dout(dpp, 10) << fmt::format(
-                                "part {} is too small, and not the last part!",
-                                part.part_num
-                            )
-                         << dendl;
+        (std::distance(it, part_etags.cend()) > 1)) {
+      lsfs_dout(dpp, 1) << fmt::format(
+                               "part {} is too small and not the last part!", k
+                           )
+                        << dendl;
       return -ERR_TOO_SMALL;
     }
 
-    char part_etag[CEPH_CRYPTO_MD5_DIGESTSIZE];
-    hex_to_buf(
-        part.etag.value().c_str(), part_etag, CEPH_CRYPTO_MD5_DIGESTSIZE
-    );
-    hash.Update((const unsigned char*)part_etag, sizeof(part_etag));
-
+    to_complete[k] = p->second;
+    hash.update(part_etag);
     expected_size += part.len;
   }
 
@@ -315,21 +308,7 @@ int SFSMultipartUploadV2::complete(
   }
 
   // calculate final etag
-
-  char final_etag[CEPH_CRYPTO_MD5_DIGESTSIZE];
-  // final str contains twice as many bytes because it's storing each byte as an
-  // hex string (i.e., one 8 bit char for each 4 bit per byte).
-  char final_etag_str
-      [(CEPH_CRYPTO_MD5_DIGESTSIZE * 2) + MULTIPART_PART_SUFFIX_LEN];
-  hash.Final((unsigned char*)final_etag);
-  buf_to_hex((unsigned char*)final_etag, sizeof(final_etag), final_etag_str);
-  std::snprintf(
-      &final_etag_str
-          [CEPH_CRYPTO_MD5_DIGESTSIZE * 2],  // start at end of hex str
-      sizeof(final_etag_str) - (CEPH_CRYPTO_MD5_DIGESTSIZE * 2), "-%lld",
-      (long long)part_etags.size()
-  );
-  std::string etag = final_etag_str;
+  std::string etag = fmt::format("{}-{}", hash.final(), part_etags.size());
 
   lsfs_dout(dpp, 10) << fmt::format(
                             "upload_id: {}, final etag: {}", upload_id, etag
@@ -352,10 +331,11 @@ int SFSMultipartUploadV2::complete(
                        << dendl;
     return -ERR_INTERNAL_ERROR;
   }
+
   size_t accounted_bytes = 0;
 
-  for (const auto& part : parts) {
-    MultipartPartPath partpath(mp->obj_uuid, part.part_num);
+  for (const auto& [part_num, part] : to_complete) {
+    MultipartPartPath partpath(mp->obj_uuid, part_num);
     std::filesystem::path path = store->get_data_path() / partpath.to_path();
 
     ceph_assert(std::filesystem::exists(path));

@@ -14,11 +14,16 @@
 
 #include <filesystem>
 
+#include "common/ceph_crypto.h"
 #include "rgw/driver/sfs/uuid_path.h"
+#include "rgw/rgw_common.h"
 
 #define MULTIPART_PART_SUFFIX_LEN (6 + 1)  // '-' + len(10000) + '\0'
 
 namespace rgw::sal::sfs {
+
+using TOPNSPC::crypto::MD5;
+
 enum class MultipartState {
   NONE = 0,
   INIT,
@@ -42,6 +47,35 @@ class MultipartPartPath : public UUIDPath {
 
   virtual std::filesystem::path to_path() const override { return partpath; }
 };
+
+class ETagBuilder {
+  MD5 hash;
+
+ public:
+  ETagBuilder() = default;
+  ~ETagBuilder() = default;
+
+  void update(const std::string& val) {
+    char buf[CEPH_CRYPTO_MD5_DIGESTSIZE];
+    hex_to_buf(val.c_str(), buf, CEPH_CRYPTO_MD5_DIGESTSIZE);
+    hash.Update((const unsigned char*)buf, sizeof(buf));
+  }
+
+  void update(ceph::bufferlist& bl) {
+    hash.Update((const unsigned char*)bl.c_str(), bl.length());
+  }
+
+  const std::string final() {
+    // final string contains twice as many bytes because it's storing each byte
+    // as an hex string (i.e., one 8 bit char for each 4 bit per byte).
+    char final_etag[CEPH_CRYPTO_MD5_DIGESTSIZE];
+    char final_etag_str[CEPH_CRYPTO_MD5_DIGESTSIZE * 2];
+    hash.Final((unsigned char*)final_etag);
+    buf_to_hex((unsigned char*)final_etag, sizeof(final_etag), final_etag_str);
+    return final_etag_str;
+  }
+};
+
 }  // namespace rgw::sal::sfs
 
 inline std::ostream& operator<<(
