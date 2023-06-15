@@ -476,7 +476,9 @@ void SFSObject::_refresh_meta_from_object(
   // fill values from objref
   set_obj_size(objref->get_meta().size);
   set_attrs(objref->get_attrs());
+  state.accounted_size = objref->get_meta().size;
   state.mtime = objref->get_meta().mtime;
+  state.exists = true;
   if (update_version_id_from_metadata) {
     set_instance(objref->instance);
   }
