@@ -81,7 +81,7 @@ class SFSMultipartPartV2 : public StoreMultipartPart {
   SFSMultipartPartV2(const sqlite::DBMultipartPart& part)
       : upload_id(part.upload_id),
         part_num(part.part_num),
-        len(part.len),
+        len(part.size),
         etag(part.etag.value()),
         mtime(part.mtime.value()) {}
 

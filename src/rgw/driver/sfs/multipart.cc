@@ -101,8 +101,8 @@ int SFSMultipartUploadV2::init(
       .upload_id = upload_id,
       .state = sfs::MultipartState::INIT,
       .state_change_time = now,
-      .obj_name = oid,
-      .obj_uuid = uuid,
+      .object_name = oid,
+      .object_uuid = uuid,
       .meta_str = meta_str,
       .owner_id = owner,
       .mtime = now,
@@ -280,7 +280,7 @@ int SFSMultipartUploadV2::complete(
       return -ERR_INVALID_PART;
     }
 
-    if ((part.len < 5 * 1024 * 1024) &&
+    if ((part.size < 5 * 1024 * 1024) &&
         (std::distance(it, part_etags.cend()) > 1)) {
       lsfs_dout(dpp, 1) << fmt::format(
                                "part {} is too small and not the last part!", k
@@ -290,8 +290,6 @@ int SFSMultipartUploadV2::complete(
     }
 
     to_complete[k] = p->second;
-    hash.update(part_etag);
-    expected_size += part.len;
   }
 
   if (store->filesystem_stats_avail_bytes.load() < expected_size) {
@@ -320,7 +318,7 @@ int SFSMultipartUploadV2::complete(
   ceph_assert(res == true);
 
   std::filesystem::path objpath =
-      store->get_data_path() / UUIDPath(mp->obj_uuid).to_path();
+      store->get_data_path() / UUIDPath(mp->object_uuid).to_path();
 
   int objfd = ::open(objpath.c_str(), O_WRONLY | O_BINARY | O_CREAT, 0600);
   if (objfd < 0) {
@@ -335,15 +333,15 @@ int SFSMultipartUploadV2::complete(
   size_t accounted_bytes = 0;
 
   for (const auto& [part_num, part] : to_complete) {
-    MultipartPartPath partpath(mp->obj_uuid, part_num);
+    MultipartPartPath partpath(mp->object_uuid, part_num);
     std::filesystem::path path = store->get_data_path() / partpath.to_path();
 
     ceph_assert(std::filesystem::exists(path));
     auto partsize = std::filesystem::file_size(path);
-    if (partsize != part.len) {
+    if (partsize != part.size) {
       lsfs_dout(dpp, 1) << fmt::format(
                                "part size mismatch, expected {}, found: {}",
-                               part.len, partsize
+                               part.size, partsize
                            )
                         << dendl;
       return -ERR_INVALID_PART;
@@ -429,7 +427,7 @@ int SFSMultipartUploadV2::complete(
     lsfs_dout(dpp, -1)
         << fmt::format(
                "error while fetching obj ref from bucket: {}, oid: {}: {}",
-               bucketref->get_bucket_id(), mp->obj_name, e.what()
+               bucketref->get_bucket_id(), mp->object_name, e.what()
            )
         << dendl;
     return -ERR_INTERNAL_ERROR;
@@ -581,13 +579,13 @@ int SFSMultipartUploadV2::list_multiparts(
   ceph_assert(uploads.size() == 0);  // make sure rgw is not being naughty :)
   for (const auto& entry : entries.value()) {
     uploads.push_back(std::make_unique<SFSMultipartUploadV2>(
-        store, bucket, bucketref, entry.upload_id, entry.obj_name,
+        store, bucket, bucketref, entry.upload_id, entry.object_name,
         entry.owner_id, entry.mtime
     ));
     lsfs_dout_for(dpp, 10, cls)
         << fmt::format(
                "found multipart upload id: {}, bucket: {}, obj: {}",
-               entry.upload_id, bucket->get_key().name, entry.obj_name
+               entry.upload_id, bucket->get_key().name, entry.object_name
            )
         << dendl;
   }

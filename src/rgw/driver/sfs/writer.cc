@@ -427,7 +427,7 @@ int SFSMultipartWriterV2::prepare(optional_yield y) {
     return -ERR_NO_SUCH_UPLOAD;
   }
 
-  MultipartPartPath partpath(mp->obj_uuid, part_num);
+  MultipartPartPath partpath(mp->object_uuid, part_num);
   std::filesystem::path path = store->get_data_path() / partpath.to_path();
 
   std::error_code ec;

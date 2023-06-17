@@ -47,7 +47,7 @@ std::optional<std::vector<DBOPMultipart>> SQLiteMultipart::list_multiparts(
           greater_or_equal(&DBMultipart::state, MultipartState::INIT) and
           lesser_than(&DBMultipart::state, MultipartState::COMPLETE) and
           greater_or_equal(&DBMultipart::meta_str, marker) and
-          like(&DBMultipart::obj_name, fmt::format("{}%", prefix))
+          like(&DBMultipart::object_name, fmt::format("{}%", prefix))
       ),
       order_by(&DBMultipart::meta_str), limit(max_uploads + 1)
   );
@@ -220,7 +220,7 @@ std::optional<DBMultipartPart> SQLiteMultipart::create_or_reset_part(
       ceph_assert(parts.size() == 1);
       // reset part entry
       part = parts.front();
-      part.len = 0;
+      part.size = 0;
       part.etag = std::nullopt;
       part.mtime = std::nullopt;
       try {
@@ -233,7 +233,7 @@ std::optional<DBMultipartPart> SQLiteMultipart::create_or_reset_part(
       }
     } else {
       part = DBMultipartPart{
-          .upload_id = upload_id, .part_num = part_num, .len = 0};
+          .upload_id = upload_id, .part_num = part_num, .size = 0};
       try {
         storage.insert(part);
       } catch (const std::system_error& e) {
@@ -260,7 +260,7 @@ bool SQLiteMultipart::finish_part(
     storage.update_all(
         set(c(&DBMultipartPart::etag) = etag,
             c(&DBMultipartPart::mtime) = ceph::real_time::clock::now(),
-            c(&DBMultipartPart::len) = bytes_written),
+            c(&DBMultipartPart::size) = bytes_written),
         where(
             is_equal(&DBMultipartPart::upload_id, upload_id) and
             is_equal(&DBMultipartPart::part_num, part_num) and
