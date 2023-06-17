@@ -32,7 +32,7 @@
 namespace rgw::sal::sfs::sqlite {
 
 /// current db version.
-constexpr int SFS_METADATA_VERSION = 2;
+constexpr int SFS_METADATA_VERSION = 3;
 /// minimum required version to upgrade db.
 constexpr int SFS_METADATA_MIN_VERSION = 1;
 
@@ -214,8 +214,8 @@ inline auto _make_storage(const std::string& path) {
           sqlite_orm::make_column(
               "state_change_time", &DBMultipart::state_change_time
           ),
-          sqlite_orm::make_column("object_name", &DBMultipart::obj_name),
-          sqlite_orm::make_column("object_uuid", &DBMultipart::obj_uuid),
+          sqlite_orm::make_column("object_name", &DBMultipart::object_name),
+          sqlite_orm::make_column("object_uuid", &DBMultipart::object_uuid),
           sqlite_orm::make_column("meta_str", &DBMultipart::meta_str),
           sqlite_orm::make_column("owner_id", &DBMultipart::owner_id),
           sqlite_orm::make_column(
@@ -231,7 +231,7 @@ inline auto _make_storage(const std::string& path) {
           ),
           sqlite_orm::unique(&DBMultipart::upload_id),
           sqlite_orm::unique(&DBMultipart::bucket_id, &DBMultipart::upload_id),
-          sqlite_orm::unique(&DBMultipart::obj_uuid),
+          sqlite_orm::unique(&DBMultipart::object_uuid),
           sqlite_orm::foreign_key(&DBMultipart::bucket_id)
               .references(&DBBucket::bucket_id)
       ),
@@ -243,7 +243,7 @@ inline auto _make_storage(const std::string& path) {
           ),
           sqlite_orm::make_column("upload_id", &DBMultipartPart::upload_id),
           sqlite_orm::make_column("part_num", &DBMultipartPart::part_num),
-          sqlite_orm::make_column("len", &DBMultipartPart::len),
+          sqlite_orm::make_column("size", &DBMultipartPart::size),
           sqlite_orm::make_column("etag", &DBMultipartPart::etag),
           sqlite_orm::make_column("mtime", &DBMultipartPart::mtime),
           sqlite_orm::unique(

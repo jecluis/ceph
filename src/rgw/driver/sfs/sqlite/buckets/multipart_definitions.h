@@ -28,8 +28,8 @@ struct DBMultipart {
   std::string upload_id;
   MultipartState state;
   ceph::real_time state_change_time;
-  std::string obj_name;
-  uuid_d obj_uuid;
+  std::string object_name;
+  uuid_d object_uuid;
   std::string meta_str;
 
   std::string owner_id;
@@ -44,7 +44,7 @@ struct DBMultipartPart {
   int id;
   std::string upload_id;
   uint32_t part_num;
-  uint64_t len;
+  uint64_t size;
   std::optional<std::string> etag;
   std::optional<ceph::real_time> mtime;
 
@@ -57,8 +57,8 @@ struct DBOPMultipart {
   std::string upload_id;
   MultipartState state;
   ceph::real_time state_change_time;
-  std::string obj_name;
-  uuid_d obj_uuid;
+  std::string object_name;
+  uuid_d object_uuid;
   std::string meta_str;
 
   ACLOwner owner_id;
