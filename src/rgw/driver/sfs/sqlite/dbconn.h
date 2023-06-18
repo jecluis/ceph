@@ -32,7 +32,7 @@
 namespace rgw::sal::sfs::sqlite {
 
 /// current db version.
-constexpr int SFS_METADATA_VERSION = 1;
+constexpr int SFS_METADATA_VERSION = 2;
 /// minimum required version to upgrade db.
 constexpr int SFS_METADATA_MIN_VERSION = 1;
 

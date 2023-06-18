@@ -109,11 +109,73 @@ static int get_version(
   }
 }
 
-// example function to upgrade db
-//
-// static void upgrade_metadata_from_v1(sqlite3* db) {
-//   sqlite3_exec(db, "ALTER TABLE foo ...", nullptr, nullptr, nullptr);
-// }
+static int upgrade_metadata_from_v1(sqlite3* db, std::string* errmsg) {
+  auto rc = sqlite3_exec(
+      db,
+      fmt::format(
+          "CREATE TABLE '{}' ("
+          "'id' INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,"
+          "'bucket_id' TEXT NOT NULL,"
+          "'upload_id' TEXT NOT NULL,"
+          "'state' INTEGER NOT NULL ,"
+          "'state_change_time' INTEGER NOT NULL,"
+          "'object_name' TEXT NOT NULL,"
+          "'object_uuid' TEXT NOT NULL,"
+          "'meta_str' TEXT NOT NULL,"
+          "'owner_id' TEXT NOT NULL,"
+          "'owner_display_name' TEXT NOT NULL,"
+          "'mtime' INTEGER NOT NULL,"
+          "'attrs' BLOB NOT NULL,"
+          "'placement_name' TEXT NOT NULL,"
+          "'placement_storage_class' TEXT NOT NULL,"
+          "UNIQUE(upload_id),"
+          "UNIQUE(bucket_id, upload_id),"
+          "UNIQUE(object_uuid),"
+          "FOREIGN KEY('bucket_id') REFERENCES '{}' ('bucket_id')"
+          ")",
+          MULTIPARTS_TABLE, BUCKETS_TABLE
+      )
+          .c_str(),
+      nullptr, nullptr, nullptr
+  );
+  if (rc != SQLITE_OK) {
+    if (errmsg != nullptr) {
+      *errmsg = fmt::format(
+          "Error creating '{}' table: {}", MULTIPARTS_TABLE, sqlite3_errmsg(db)
+      );
+    }
+    return -1;
+  }
+
+  rc = sqlite3_exec(
+      db,
+      fmt::format(
+          "CREATE TABLE '{}' ("
+          "'id' INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,"
+          "'upload_id' TEXT NOT NULL,"
+          "'part_num' INTEGER NOT NULL,"
+          "'len' INTEGER NOT NULL,"
+          "'etag' TEXT,"
+          "'mtime' INTEGER,"
+          "UNIQUE(upload_id, part_num),"
+          "FOREIGN KEY('upload_id') REFERENCES '{}'('upload_id')"
+          ")",
+          MULTIPARTS_PARTS_TABLE, MULTIPARTS_TABLE
+      )
+          .c_str(),
+      nullptr, nullptr, nullptr
+  );
+  if (rc != SQLITE_OK) {
+    if (errmsg != nullptr) {
+      *errmsg = fmt::format(
+          "Error creating '{}' table: {}", MULTIPARTS_PARTS_TABLE,
+          sqlite3_errmsg(db)
+      );
+    }
+    return -1;
+  }
+  return 0;
+}
 
 static void upgrade_metadata(
     CephContext* cct, rgw::sal::sfs::sqlite::Storage& storage, sqlite3* db
@@ -126,11 +188,22 @@ static void upgrade_metadata(
       break;
     }
 
-    // example check to upgrade db
-    // if (cur_version == 1) {
-    //   upgrade_metadata_from_v1(db);
-    // }
+    if (cur_version == 1) {
+      std::string errmsg;
+      auto rc = upgrade_metadata_from_v1(db, &errmsg);
+      if (rc < 0) {
+        auto err = fmt::format("Error upgrading from version 1: {}", errmsg);
+        lsubdout(cct, rgw, 10) << err << dendl;
+        throw sqlite_sync_exception(err);
+      }
+    }
 
+    lsubdout(cct, rgw, 1)
+        << fmt::format(
+               "upgraded metadata from version {} to version {}", cur_version,
+               cur_version + 1
+           )
+        << dendl;
     storage.pragma.user_version(cur_version + 1);
   }
 }
