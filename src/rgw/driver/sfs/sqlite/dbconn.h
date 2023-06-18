@@ -28,7 +28,10 @@
 
 namespace rgw::sal::sfs::sqlite {
 
+/// current db version.
 constexpr int SFS_METADATA_VERSION = 1;
+/// minimum required version to upgrade db.
+constexpr int SFS_METADATA_MIN_VERSION = 1;
 
 constexpr std::string_view SCHEMA_DB_NAME = "s3gw.db";
 
@@ -220,7 +223,7 @@ class DBConn {
     };
     storage.open_forever();
     storage.busy_timeout(5000);
-    check_metadata_is_compatible(cct);
+    maybe_upgrade_metadata(cct);
     storage.sync_schema();
   }
   virtual ~DBConn() = default;
@@ -237,7 +240,7 @@ class DBConn {
     return db_path.string();
   }
 
-  void check_metadata_is_compatible(CephContext* ctt);
+  void maybe_upgrade_metadata(CephContext* cct);
 };
 
 using DBConnRef = std::shared_ptr<DBConn>;
