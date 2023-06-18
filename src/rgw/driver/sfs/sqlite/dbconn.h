@@ -28,6 +28,8 @@
 
 namespace rgw::sal::sfs::sqlite {
 
+constexpr int SFS_METADATA_VERSION = 1;
+
 constexpr std::string_view SCHEMA_DB_NAME = "s3gw.db";
 
 constexpr std::string_view USERS_TABLE = "users";
