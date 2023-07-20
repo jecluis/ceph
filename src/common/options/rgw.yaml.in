@@ -3803,3 +3803,11 @@ options:
     Rancher upgrade responder URL
   service:
     - rgw
+- name: rgw_sfs_sqlite_profile
+  type: bool
+  level: advanced
+  default: false
+  desc:
+    Set up SQL query profiling using RGW logger.
+  service:
+    - rgw
