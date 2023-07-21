@@ -84,6 +84,10 @@ int rgw_perf_start(CephContext *cct)
   plb.add_u64_counter(l_rgw_lua_script_fail, "lua_script_fail", "Failed executions of lua scripts");
   plb.add_u64(l_rgw_lua_current_vms, "lua_current_vms", "Number of Lua VMs currently being executed");
 
+  plb.add_u64_counter(l_rgw_sfs_sqlite_retry_total, "sfs_retry_total", "Total number of transactions ran with retry utility");
+  plb.add_u64_counter(l_rgw_sfs_sqlite_retry_retried_count, "sfs_retry_retried_count", "Number of transactions succeeded after retry");
+  plb.add_u64_counter(l_rgw_sfs_sqlite_retry_failed_count, "sfs_retry_failed_count", "Number of yransactions failed after retry");
+
   PerfCountersBuilder op_plb(cct, "rgw_op", RGW_OP_UNKNOWN-1, RGW_OP_LAST);
   PerfCountersBuilder op_plb_svc_hist(cct, "rgw_op_svc_time", RGW_OP_UNKNOWN-1, RGW_OP_LAST);
   PerfCountersBuilder op_plb_svc_sum(cct, "rgw_op_svc_time", RGW_OP_UNKNOWN-1, RGW_OP_LAST);

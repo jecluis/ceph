@@ -25,6 +25,7 @@ set(sfs_srcs
     sqlite/users/users_conversions.cc
     sqlite/buckets/bucket_conversions.cc
     sqlite/dbconn.cc
+    sqlite/errors.cc
     bucket.cc
     multipart.cc
     object.cc

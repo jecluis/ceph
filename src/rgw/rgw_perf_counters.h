@@ -62,6 +62,9 @@ enum {
   l_rgw_lua_script_ok,
   l_rgw_lua_script_fail,
 
+  l_rgw_sfs_sqlite_retry_total,
+  l_rgw_sfs_sqlite_retry_retried_count,
+  l_rgw_sfs_sqlite_retry_failed_count,
+
   l_rgw_last,
 };
-
