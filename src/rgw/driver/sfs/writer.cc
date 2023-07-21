@@ -189,24 +189,17 @@ int SFSAtomicWriter::prepare(optional_yield y) {
     return -ERR_QUOTA_EXCEEDED;
   }
 
-  try {
-    objref = bucketref->create_version(obj.get_key());
-  } catch (const std::system_error& e) {
+  objref = bucketref->create_version(obj.get_key());
+  if (!objref) {
     lsfs_dout(dpp, -1)
         << fmt::format(
-               "exception while fetching obj ref from bucket {} db:{}: {}. "
+               "failed to create new object version in bucket {} db:{}. "
                "failing operation.",
                bucketref->get_bucket_id(),
-               store->db_conn->get_storage().filename(), e.what()
+               store->db_conn->get_storage().filename()
            )
         << dendl;
-    switch (e.code().value()) {
-      case -EDQUOT:
-      case -ENOSPC:
-        return -ERR_QUOTA_EXCEEDED;
-      default:
-        return -ERR_INTERNAL_ERROR;
-    }
+    return -ERR_INTERNAL_ERROR;
   }
   object_path = store->get_data_path() / objref->get_storage_path();
 

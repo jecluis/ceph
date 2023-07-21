@@ -16,6 +16,7 @@
 #include "driver/sfs/multipart.h"
 #include "driver/sfs/sqlite/sqlite_versioned_objects.h"
 #include "driver/sfs/types.h"
+#include "rgw_common.h"
 #include "rgw_sal_sfs.h"
 
 #define dout_subsys ceph_subsys_rgw
@@ -233,6 +234,9 @@ int SFSObject::copy_object(
       store->get_data_path() / objref->get_storage_path();
 
   sfs::ObjectRef dstref = dst_bucket_ref->create_version(dst_object->get_key());
+  if (!dstref) {
+    return -ERR_INTERNAL_ERROR;
+  }
   std::filesystem::path dstpath =
       store->get_data_path() / dstref->get_storage_path();
 

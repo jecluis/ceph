@@ -16,6 +16,7 @@
 #include <stdexcept>
 
 #include "driver/sfs/object_state.h"
+#include "retry.h"
 #include "rgw/driver/sfs/uuid_path.h"
 #include "versioned_object/versioned_object_definitions.h"
 
@@ -478,9 +479,8 @@ SQLiteVersionedObjects::create_new_versioned_object_transact(
     const std::string& bucket_id, const std::string& object_name,
     const std::string& version_id
 ) const {
-  std::optional<DBVersionedObject> ret_value;
-  try {
-    auto storage = conn->get_storage();
+  auto storage = conn->get_storage();
+  RetrySQLite<DBVersionedObject> retry([&]() {
     auto transaction = storage.transaction_guard();
     auto objs = storage.select(
         columns(&DBObject::uuid),
@@ -519,13 +519,9 @@ SQLiteVersionedObjects::create_new_versioned_object_transact(
     version.create_time = ceph::real_clock::now();
     version.id = storage.insert(version);
     transaction.commit();
-    ret_value = version;
-  } catch (const std::system_error& e) {
-    // throw exception (will be caught later in the sfs logic)
-    // TODO revisit this when error handling is defined
-    throw(e);
-  }
-  return ret_value;
+    return version;
+  });
+  return retry.run();
 }
 
 }  // namespace rgw::sal::sfs::sqlite
