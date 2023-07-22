@@ -13,6 +13,8 @@
  */
 #include "rgw/driver/sfs/sqlite/sqlite_multipart.h"
 
+#include <sqlite_orm/sqlite_orm.h>
+
 #include "rgw/driver/sfs/multipart_types.h"
 #include "rgw/driver/sfs/sqlite/buckets/bucket_definitions.h"
 #include "rgw/driver/sfs/sqlite/buckets/multipart_conversions.h"
@@ -28,8 +30,6 @@ std::optional<std::vector<DBOPMultipart>> SQLiteMultipart::list_multiparts(
     const std::string& marker, const std::string& delim, const int& max_uploads,
     bool* is_truncated
 ) const {
-  std::vector<DBOPMultipart> entries;
-
   auto storage = conn->get_storage();
 
   auto bucket_entries = storage.get_all<DBBucket>(
@@ -41,11 +41,31 @@ std::optional<std::vector<DBOPMultipart>> SQLiteMultipart::list_multiparts(
   ceph_assert(bucket_entries.size() == 1);
   auto bucket_id = bucket_entries.front().bucket_id;
 
+  return list_multiparts_by_bucket_id(
+      bucket_id, prefix, marker, delim, max_uploads, is_truncated, false
+  );
+}
+
+std::vector<DBOPMultipart> SQLiteMultipart::list_multiparts_by_bucket_id(
+    const std::string& bucket_id, const std::string& prefix,
+    const std::string& marker, const std::string& delim, const int& max_uploads,
+    bool* is_truncated, bool get_all
+) const {
+  std::vector<DBOPMultipart> entries;
+  auto storage = conn->get_storage();
+
+  auto start_state = get_all ? MultipartState::NONE : MultipartState::INIT;
+  auto end_state =
+      get_all ? MultipartState::LAST_VALUE : MultipartState::INPROGRESS;
+
+  auto start_cond = greater_or_equal(&DBMultipart::state, start_state);
+  auto end_cond = lesser_or_equal(&DBMultipart::state, end_state);
+
+  auto cond = start_cond and end_cond;
+
   auto db_entries = storage.get_all<DBMultipart>(
       where(
-          is_equal(&DBMultipart::bucket_id, bucket_id) and
-          greater_or_equal(&DBMultipart::state, MultipartState::INIT) and
-          lesser_than(&DBMultipart::state, MultipartState::COMPLETE) and
+          is_equal(&DBMultipart::bucket_id, bucket_id) and cond and
           greater_or_equal(&DBMultipart::meta_str, marker) and
           like(&DBMultipart::object_name, fmt::format("{}%", prefix))
       ),
@@ -68,17 +88,9 @@ std::optional<std::vector<DBOPMultipart>> SQLiteMultipart::list_multiparts(
   return entries;
 }
 
-int SQLiteMultipart::abort_multiparts(const std::string& bucket_name) const {
+int SQLiteMultipart::abort_multiparts_by_bucket_id(const std::string& bucket_id
+) const {
   auto storage = conn->get_storage();
-  auto bucket_ids_vec = storage.select(
-      &DBBucket::bucket_id, where(is_equal(&DBBucket::bucket_name, bucket_name))
-  );
-  if (bucket_ids_vec.size() == 0) {
-    return -ERR_NO_SUCH_BUCKET;
-  }
-  ceph_assert(bucket_ids_vec.size() == 1);
-  auto bucket_id = bucket_ids_vec.front();
-
   uint64_t num_changes = 0;
   storage.transaction([&]() mutable {
     storage.update_all(
@@ -95,6 +107,19 @@ int SQLiteMultipart::abort_multiparts(const std::string& bucket_name) const {
   });
 
   return num_changes;
+}
+
+int SQLiteMultipart::abort_multiparts(const std::string& bucket_name) const {
+  auto storage = conn->get_storage();
+  auto bucket_ids_vec = storage.select(
+      &DBBucket::bucket_id, where(is_equal(&DBBucket::bucket_name, bucket_name))
+  );
+  if (bucket_ids_vec.size() == 0) {
+    return -ERR_NO_SUCH_BUCKET;
+  }
+  ceph_assert(bucket_ids_vec.size() == 1);
+  auto bucket_id = bucket_ids_vec.front();
+  return abort_multiparts_by_bucket_id(bucket_id);
 }
 
 std::optional<DBOPMultipart> SQLiteMultipart::get_multipart(
@@ -397,6 +422,21 @@ bool SQLiteMultipart::mark_done(const std::string& upload_id) const {
     return true;
   });
   return committed;
+}
+
+void SQLiteMultipart::remove_parts(const std::string& upload_id) const {
+  auto storage = conn->get_storage();
+  storage.remove_all<DBMultipartPart>(
+      where(c(&DBMultipartPart::upload_id) = upload_id)
+  );
+}
+
+void SQLiteMultipart::remove_multiparts_by_bucket_id(
+    const std::string& bucket_id
+) const {
+  auto storage = conn->get_storage();
+  storage.remove_all<DBMultipart>(where(c(&DBMultipart::bucket_id) = bucket_id)
+  );
 }
 
 }  // namespace rgw::sal::sfs::sqlite

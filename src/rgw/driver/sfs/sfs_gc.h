@@ -69,6 +69,7 @@ class SFSGC : public DoutPrefixProvider {
  private:
   void process_deleted_buckets();
 
+  void delete_multiparts(const std::string& bucket_id);
   void delete_objects(const std::string& bucket_id);
   void delete_versioned_objects(const Object& object);
 

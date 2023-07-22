@@ -13,8 +13,12 @@
  */
 #include "sfs_gc.h"
 
+#include <filesystem>
+
 #include "driver/sfs/types.h"
+#include "multipart_types.h"
 #include "rgw/driver/sfs/sqlite/sqlite_objects.h"
+#include "sqlite_multipart.h"
 
 namespace rgw::sal::sfs {
 
@@ -117,7 +121,9 @@ void SFSGC::delete_versioned_objects(const Object& object) {
 }
 
 void SFSGC::delete_bucket(const std::string& bucket_id) {
-  // delete the objects of the bucket first
+  // delete the multiparts on the bucket first
+  delete_multiparts(bucket_id);
+  // then delete the objects of the bucket
   delete_objects(bucket_id);
   if (max_objects > 0) {
     sqlite::SQLiteBuckets db_buckets(store->db_conn);
@@ -125,6 +131,44 @@ void SFSGC::delete_bucket(const std::string& bucket_id) {
     lsfs_dout(this, 30) << "Deleted bucket: " << bucket_id << dendl;
     --max_objects;
   }
+}
+
+void SFSGC::delete_multiparts(const std::string& bucket_id) {
+  sqlite::SQLiteMultipart db_mp(store->db_conn);
+  int ret = db_mp.abort_multiparts_by_bucket_id(bucket_id);
+  ceph_assert(ret >= 0);
+
+  // now we can delete both the multipart uploads' parts, and the uploads themselves.
+
+  // grab all multiparts
+  auto mps = db_mp.list_multiparts_by_bucket_id(
+      bucket_id, "", "", "", 10000, nullptr, true
+  );
+  if (mps.empty()) {
+    lsfs_dout(this, 30) << "No multiparts to remove for bucket id " << bucket_id
+                        << dendl;
+    return;
+  }
+
+  for (const auto& mp : mps) {
+    // grab all parts destination files
+    auto parts = db_mp.get_parts(mp.upload_id);
+    for (const auto& part : parts) {
+      // delete on-disk part file
+      MultipartPartPath pp(mp.object_uuid, part.part_num);
+      auto p = pp.to_path();
+      if (!std::filesystem::exists(p)) {
+        continue;
+      }
+      std::filesystem::remove(p);
+    }
+
+    // then delete all parts from the db.
+    db_mp.remove_parts(mp.upload_id);
+  }
+
+  // and then delete all multiparts from the db.
+  db_mp.remove_multiparts_by_bucket_id(bucket_id);
 }
 
 void SFSGC::delete_object(const Object& object) {

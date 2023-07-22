@@ -47,6 +47,26 @@ class SQLiteMultipart {
   ) const;
 
   /**
+   * @brief Obtain a vector of all multipart uploads on a given bucket,
+   * according to the specified parameters.
+   *
+   * @param bucket_id The id of the bucket for which to list multipart
+   * uploads.
+   * @param prefix Prefix to match when listing multipart uploads.
+   * @param marker Pagination marker, it's the first multipart upload to obtain.
+   * @param delim ??
+   * @param max_uploads Maximum number of multipart uploads to obtain, per page.
+   * @param is_truncated Whether the results have been truncated due to
+   * pagination.
+   * @return std::optional<std::vector<DBOPMultipart>>
+   */
+  std::vector<DBOPMultipart> list_multiparts_by_bucket_id(
+      const std::string& bucket_id, const std::string& prefix,
+      const std::string& marker, const std::string& delim,
+      const int& max_uploads, bool* is_truncated, bool get_all
+  ) const;
+
+  /**
    * @brief Abort on-going multipart uploads on a given bucket.
    *
    * @param bucket_name The name of the bucket for which multipart uploads will
@@ -55,6 +75,14 @@ class SQLiteMultipart {
    * error.
    */
   int abort_multiparts(const std::string& bucket_name) const;
+
+  /**
+   * @brief Abort on-going multipart uploads on a given bucket.
+   *
+   * @param bucket_id The ID of the bucket for which multipart uploads will be aborted.
+   * @return the number of aborted multipart uploads.
+   */
+  int abort_multiparts_by_bucket_id(const std::string& bucket_id) const;
 
   /**
    * @brief Get the converted Multipart entry from the database.
@@ -180,6 +208,20 @@ class SQLiteMultipart {
    * @return false if no multipart upload was found.
    */
   bool mark_done(const std::string& upload_id) const;
+
+  /**
+   * @brief Remove all parts for the specified multipart upload.
+   *
+   * @param upload_id The Multipart Upload's ID.
+   */
+  void remove_parts(const std::string& upload_id) const;
+
+  /**
+   * @brief Remove all multipart uploads from a specific bucket.
+   *
+   * @param bucket_id The bucket ID for which to remove multipart uploads.
+   */
+  void remove_multiparts_by_bucket_id(const std::string& bucket_id) const;
 };
 
 }  // namespace rgw::sal::sfs::sqlite
